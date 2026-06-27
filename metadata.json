@@ -1,0 +1,6 @@
+{
+  "name": "CodeScope",
+  "description": "AI-powered Source Code Intelligence Platform and static analyzer for developer projects.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
