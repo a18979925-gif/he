@@ -19,7 +19,13 @@ import {
   FileText,
   CheckCircle2,
   ShieldAlert as AlertOctagon,
-  ExternalLink
+  ExternalLink,
+  Search,
+  Filter,
+  ChevronDown,
+  ChevronUp,
+  Zap,
+  X
 } from "lucide-react";
 import { CodeScopeAnalysis, SecurityIssue } from "../types";
 
@@ -166,6 +172,200 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, type, title }) => {
   );
 };
 
+// ─── Severity Breakdown Summary Bar ─────────────────────────────────────────
+interface SeverityCount {
+  label: string;
+  count: number;
+  color: string;
+  bgColor: string;
+  borderColor: string;
+  barColor: string;
+  pulseColor?: string;
+}
+
+const SeverityBreakdownBar: React.FC<{ issues: SecurityIssueExtended[] }> = ({ issues }) => {
+  const counts: Record<string, number> = { Critical: 0, High: 0, Medium: 0, Low: 0 };
+  issues.forEach(i => { counts[i.severity] = (counts[i.severity] || 0) + 1; });
+  const total = issues.length || 1;
+
+  const severities: SeverityCount[] = [
+    { label: "Critical", count: counts.Critical, color: "text-rose-400", bgColor: "bg-rose-500/10", borderColor: "border-rose-500/30", barColor: "bg-rose-500", pulseColor: "bg-rose-400" },
+    { label: "High", count: counts.High, color: "text-orange-400", bgColor: "bg-orange-500/10", borderColor: "border-orange-500/30", barColor: "bg-orange-500" },
+    { label: "Medium", count: counts.Medium, color: "text-amber-400", bgColor: "bg-amber-500/10", borderColor: "border-amber-500/30", barColor: "bg-amber-500" },
+    { label: "Low", count: counts.Low, color: "text-blue-400", bgColor: "bg-blue-500/10", borderColor: "border-blue-500/30", barColor: "bg-blue-500" },
+  ];
+
+  return (
+    <div className="bg-slate-900/50 backdrop-blur-md border border-slate-800/80 rounded-xl p-4 relative z-10">
+      {/* Premium UI Polish Status Header */}
+      <div className="flex justify-between items-center bg-slate-900/35 border border-slate-800/80 px-4 py-2.5 rounded-xl mb-4 hover:scale-[1.002] transition-transform duration-300">
+        <div className="flex items-center gap-2">
+          <svg className="h-3.5 w-3.5 text-indigo-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+          </svg>
+          <span className="text-[9px] uppercase font-bold tracking-widest text-slate-400 font-sans">Module: AST-Inferred Source Intelligence</span>
+        </div>
+        <div className="flex items-center gap-1.5 text-[9px] bg-slate-950 text-slate-400 font-bold px-2 py-0.5 rounded-full border border-slate-850 select-none">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          AI Oracle Connected
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 mb-3">
+        <ShieldAlert className="h-4 w-4 text-rose-400" />
+        <span className="text-[10px] text-slate-400 uppercase tracking-widest font-mono font-bold">Severity Breakdown</span>
+      </div>
+
+      {/* Badges Row */}
+      <div className="flex flex-wrap gap-2 mb-3">
+        {severities.map(s => (
+          <div
+            key={s.label}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${s.bgColor} ${s.borderColor} transition-all duration-300 hover:scale-105`}
+          >
+            {/* Pulsing dot for critical */}
+            {s.label === "Critical" && s.count > 0 ? (
+              <span className="relative flex h-2 w-2">
+                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${s.pulseColor} opacity-75`} />
+                <span className={`relative inline-flex rounded-full h-2 w-2 ${s.barColor}`} />
+              </span>
+            ) : (
+              <span className={`h-2 w-2 rounded-full ${s.barColor} ${s.count > 0 ? "opacity-100" : "opacity-30"}`} />
+            )}
+            <span className={`text-[10px] font-bold font-mono uppercase tracking-wider ${s.color} ${s.count === 0 ? "opacity-40" : ""}`}>
+              {s.label}
+            </span>
+            <span className={`text-xs font-black font-mono ${s.color} ${s.count === 0 ? "opacity-40" : ""}`}>
+              {s.count}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Stacked progress bar */}
+      <div className="h-2.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800 flex">
+        {severities.map(s => (
+          s.count > 0 ? (
+            <div
+              key={s.label}
+              className={`${s.barColor} transition-all duration-700 ease-out relative overflow-hidden`}
+              style={{ width: `${(s.count / total) * 100}%` }}
+            >
+              <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/10 to-white/0 animate-[shimmer_2s_infinite]" />
+            </div>
+          ) : null
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// ─── Filter/Search Bar ──────────────────────────────────────────────────────
+interface FilterBarProps {
+  searchQuery: string;
+  setSearchQuery: (q: string) => void;
+  severityFilter: string;
+  setSeverityFilter: (s: string) => void;
+  categoryFilter: string;
+  setCategoryFilter: (c: string) => void;
+  categories: string[];
+}
+
+const FilterSearchBar: React.FC<FilterBarProps> = ({
+  searchQuery, setSearchQuery,
+  severityFilter, setSeverityFilter,
+  categoryFilter, setCategoryFilter,
+  categories
+}) => {
+  const hasActiveFilters = searchQuery || severityFilter !== "All" || categoryFilter !== "All";
+
+  return (
+    <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/80 rounded-xl p-3 relative z-10 space-y-2">
+      {/* Search Input */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Filter by file path, category, description..."
+          className="w-full bg-slate-950/80 border border-slate-800 rounded-lg pl-9 pr-8 py-2 text-xs text-slate-300 placeholder:text-slate-600 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all duration-200"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery("")}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+
+      {/* Filter Pills */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Filter className="h-3 w-3 text-slate-500 shrink-0" />
+
+        {/* Severity filter */}
+        <select
+          value={severityFilter}
+          onChange={(e) => setSeverityFilter(e.target.value)}
+          className="bg-slate-950/80 border border-slate-800 rounded-lg px-2.5 py-1 text-[10px] text-slate-400 font-mono uppercase tracking-wider focus:outline-none focus:ring-1 focus:ring-indigo-500/50 cursor-pointer appearance-none hover:border-slate-700 transition-colors"
+        >
+          <option value="All">All Severities</option>
+          <option value="Critical">Critical</option>
+          <option value="High">High</option>
+          <option value="Medium">Medium</option>
+          <option value="Low">Low</option>
+        </select>
+
+        {/* Category filter */}
+        <select
+          value={categoryFilter}
+          onChange={(e) => setCategoryFilter(e.target.value)}
+          className="bg-slate-950/80 border border-slate-800 rounded-lg px-2.5 py-1 text-[10px] text-slate-400 font-mono uppercase tracking-wider focus:outline-none focus:ring-1 focus:ring-indigo-500/50 cursor-pointer appearance-none hover:border-slate-700 transition-colors max-w-[180px] truncate"
+        >
+          <option value="All">All Categories</option>
+          {categories.map(c => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+
+        {hasActiveFilters && (
+          <button
+            onClick={() => { setSearchQuery(""); setSeverityFilter("All"); setCategoryFilter("All"); }}
+            className="text-[9px] text-indigo-400 hover:text-indigo-300 font-mono uppercase tracking-wider flex items-center gap-1 px-2 py-1 bg-indigo-950/30 border border-indigo-900/30 rounded-lg transition-all duration-200 hover:bg-indigo-950/50 cursor-pointer"
+          >
+            <X className="h-2.5 w-2.5" />
+            Clear
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ─── Expandable Issue Detail Panel (inside card) ────────────────────────────
+const IssueExpandedDetail: React.FC<{ issue: SecurityIssueExtended; isExpanded: boolean }> = ({ issue, isExpanded }) => {
+  return (
+    <div
+      className={`overflow-hidden transition-all duration-500 ease-in-out ${
+        isExpanded ? "max-h-[200px] opacity-100 mt-2" : "max-h-0 opacity-0 mt-0"
+      }`}
+    >
+      <div className="bg-slate-950/60 border border-slate-800/50 rounded-lg p-3 space-y-1.5">
+        <p className="text-[10px] text-slate-400 leading-relaxed font-sans">
+          <strong className="text-slate-300">Solution:</strong> {issue.solution}
+        </p>
+        {issue.oldCode && (
+          <p className="text-[10px] text-slate-500 font-mono truncate">
+            <strong className="text-slate-400">Affected pattern:</strong> {issue.oldCode.split("\n")[0]}...
+          </p>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export const SecurityTab: React.FC<SecurityTabProps> = ({
   activeProject,
   selectedSecurityIssue,
@@ -176,6 +376,13 @@ export const SecurityTab: React.FC<SecurityTabProps> = ({
 }) => {
   const [fixing, setFixing] = React.useState(false);
   const [copied, setCopied] = React.useState(false);
+  const [bulkFixing, setBulkFixing] = React.useState(false);
+  const [expandedCards, setExpandedCards] = React.useState<Set<number>>(new Set());
+
+  // Filter state
+  const [searchQuery, setSearchQuery] = React.useState("");
+  const [severityFilter, setSeverityFilter] = React.useState("All");
+  const [categoryFilter, setCategoryFilter] = React.useState("All");
 
   const handleFix = async () => {
     if (!selectedSecurityIssue || !onFixIssue) return;
@@ -194,6 +401,15 @@ export const SecurityTab: React.FC<SecurityTabProps> = ({
     navigator.clipboard.writeText(path);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const toggleCardExpand = (idx: number) => {
+    setExpandedCards(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
   };
 
   // Cast selected issue to extended type to handle custom checks
@@ -271,11 +487,79 @@ export const SecurityTab: React.FC<SecurityTabProps> = ({
     }
   };
 
+  // Severity-based left border color for enhanced cards
+  const getSeverityBorderColor = (severity: string, isFixed: boolean) => {
+    if (isFixed) return "border-l-emerald-500";
+    switch (severity) {
+      case "Critical": return "border-l-rose-500";
+      case "High": return "border-l-orange-500";
+      case "Medium": return "border-l-amber-500";
+      default: return "border-l-blue-500";
+    }
+  };
+
+  // Count auto-fixable issues (issues with both oldCode and newCode that are not fixed)
+  const fixableIssues = issues.filter(i => i.oldCode && i.newCode && !i.isFixed);
+  const fixableCount = fixableIssues.length;
+
+  // Unique categories for filter dropdown
+  const uniqueCategories = Array.from(new Set(issues.map(i => i.category)));
+
+  // Apply filters
+  const filteredIssues = issues.filter(issue => {
+    // Severity filter
+    if (severityFilter !== "All" && issue.severity !== severityFilter) return false;
+    // Category filter
+    if (categoryFilter !== "All" && issue.category !== categoryFilter) return false;
+    // Search query
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const matchesFile = issue.file.toLowerCase().includes(q);
+      const matchesCategory = issue.category.toLowerCase().includes(q);
+      const matchesDescription = issue.description.toLowerCase().includes(q);
+      const matchesSeverity = issue.severity.toLowerCase().includes(q);
+      if (!matchesFile && !matchesCategory && !matchesDescription && !matchesSeverity) return false;
+    }
+    return true;
+  });
+
+  // Bulk fix all handler
+  const handleBulkFix = async () => {
+    if (!onFixIssue || fixableCount === 0) return;
+    setBulkFixing(true);
+    try {
+      for (const issue of fixableIssues) {
+        await onFixIssue(issue.file, issue.oldCode || "", issue.newCode || "");
+        (issue as SecurityIssueExtended).isFixed = true;
+      }
+      setSecurityFixed(true);
+    } catch (err) {
+      console.error("Bulk fix failed:", err);
+    } finally {
+      setBulkFixing(false);
+    }
+  };
+
   return (
     <div 
       className="space-y-6 text-left bg-slate-950 text-slate-100 p-6 rounded-2xl border border-slate-900 relative shadow-2xl overflow-hidden bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:16px_16px]" 
       id="security-tab-view"
     >
+      {/* Shimmer keyframes injected via style tag */}
+      <style>{`
+        @keyframes shimmer {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(100%); }
+        }
+        @keyframes fadeSlideIn {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-slide-in {
+          animation: fadeSlideIn 0.3s ease-out forwards;
+        }
+      `}</style>
+
       {/* Visual cyber glow background grids */}
       <div className="absolute top-0 left-0 w-80 h-80 bg-rose-500/5 blur-3xl rounded-full pointer-events-none -translate-x-1/2 -translate-y-1/2" />
       <div className="absolute bottom-0 right-0 w-96 h-96 bg-indigo-500/5 blur-3xl rounded-full pointer-events-none translate-x-1/3 translate-y-1/3" />
@@ -299,6 +583,24 @@ export const SecurityTab: React.FC<SecurityTabProps> = ({
           <span>SCAN STATUS: IDLE / COMPLETED</span>
         </div>
       </div>
+
+      {/* ─── NEW: Severity Breakdown Summary Bar ─────────────────────────── */}
+      {issues.length > 0 && (
+        <SeverityBreakdownBar issues={issues} />
+      )}
+
+      {/* ─── NEW: Filter/Search Bar ──────────────────────────────────────── */}
+      {issues.length > 0 && (
+        <FilterSearchBar
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          severityFilter={severityFilter}
+          setSeverityFilter={setSeverityFilter}
+          categoryFilter={categoryFilter}
+          setCategoryFilter={setCategoryFilter}
+          categories={uniqueCategories}
+        />
+      )}
 
       {/* Upgraded Cyber Security Score Panel */}
       <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/80 p-6 rounded-2xl shadow-xl flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
@@ -407,97 +709,149 @@ export const SecurityTab: React.FC<SecurityTabProps> = ({
         
         {/* Left Columns: Threat Feed */}
         <div className="space-y-3 lg:col-span-5 flex flex-col">
+          {/* ─── Header with Bulk Fix All Button ─────────────────────────── */}
           <div className="flex items-center justify-between px-1">
             <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider font-mono flex items-center gap-1.5">
               <Flame className="h-3.5 w-3.5 text-rose-500" />
-              Detected Vector Feeds ({issues.length})
+              Detected Vector Feeds ({filteredIssues.length}{filteredIssues.length !== issues.length ? ` / ${issues.length}` : ""})
             </span>
+
+            {/* Bulk Fix All Button */}
+            {fixableCount > 0 && onFixIssue && (
+              <button
+                onClick={handleBulkFix}
+                disabled={bulkFixing}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-indigo-600/80 to-violet-600/80 hover:from-indigo-500 hover:to-violet-500 disabled:from-slate-800 disabled:to-slate-800 disabled:text-slate-500 text-white text-[9px] font-mono font-bold uppercase tracking-wider rounded-lg border border-indigo-500/20 transition-all duration-300 cursor-pointer shadow-[0_0_12px_rgba(99,102,241,0.15)] hover:shadow-[0_0_20px_rgba(99,102,241,0.25)] active:scale-[0.97]"
+              >
+                {bulkFixing ? (
+                  <>
+                    <RefreshCw className="h-3 w-3 animate-spin" />
+                    Fixing...
+                  </>
+                ) : (
+                  <>
+                    <Zap className="h-3 w-3" />
+                    Bulk Fix All ({fixableCount})
+                  </>
+                )}
+              </button>
+            )}
           </div>
           
           <div className="space-y-3 overflow-y-auto max-h-[600px] pr-1.5 scrollbar-thin">
-            {issues.map((issue, idx) => {
+            {filteredIssues.map((issue, idx) => {
+              const originalIdx = issues.indexOf(issue);
               const isFixed = issue.isFixed || (selectedSecurityIssue?.category === issue.category && selectedSecurityIssue?.file === issue.file && securityFixed);
               const isSelected = selectedSecurityIssue?.category === issue.category && selectedSecurityIssue?.file === issue.file;
+              const isExpanded = expandedCards.has(originalIdx);
 
               return (
-                <button
-                  key={idx}
-                  onClick={() => { 
-                    setSelectedSecurityIssue(issue); 
-                    setSecurityFixed(issue.isFixed || false); 
-                  }}
-                  className={`w-full text-left p-4 rounded-xl border transition-all duration-200 flex flex-col gap-2.5 cursor-pointer relative overflow-hidden group ${
-                    isFixed 
-                      ? "bg-emerald-950/5 border-emerald-950 hover:bg-emerald-950/10" 
-                      : isSelected
-                        ? "bg-slate-900/90 border-slate-700 shadow-[0_0_15px_rgba(244,63,94,0.04)]" 
-                        : "bg-slate-900/30 hover:bg-slate-900/50 border-slate-900 hover:border-slate-800"
-                  }`}
+                <div
+                  key={originalIdx}
+                  className="animate-fade-slide-in"
+                  style={{ animationDelay: `${idx * 40}ms` }}
                 >
-                  {/* Severity Side Bar */}
-                  <div className={`absolute left-0 top-0 bottom-0 w-1 transition-all duration-300 ${
-                    isFixed 
-                      ? "bg-emerald-500" 
-                      : issue.severity === "Critical"
-                        ? "bg-rose-500"
-                        : issue.severity === "High"
-                          ? "bg-orange-500"
-                          : issue.severity === "Medium"
-                            ? "bg-amber-500"
-                            : "bg-blue-500"
-                  }`} />
-
-                  {/* Header info */}
-                  <div className="flex justify-between items-center w-full">
-                    <div className="flex items-center gap-2">
-                      {isFixed ? (
-                        <span className="bg-emerald-950/60 text-emerald-400 border border-emerald-900/60 text-[9px] font-extrabold px-2 py-0.5 rounded uppercase tracking-wider font-mono flex items-center gap-1">
-                          <ShieldCheck className="h-3 w-3" /> Mitigated
-                        </span>
-                      ) : (
-                        <span className={getSeverityStyle(issue.severity)}>
-                          <SeverityBadge severity={issue.severity} />
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-[10px] text-slate-500 font-mono bg-slate-950/80 px-2 py-0.5 border border-slate-900 rounded">
-                      Line {issue.line || "N/A"}
-                    </span>
-                  </div>
-
-                  {/* Category Title */}
-                  <div className="space-y-1">
-                    <h4 className={`text-xs font-bold font-sans flex items-center gap-1.5 ${
-                      isFixed ? "text-slate-500 line-through" : "text-white"
-                    }`}>
-                      {getCategoryIcon(issue.category)}
-                      {issue.category}
-                    </h4>
-                    <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed font-sans">
-                      {issue.description}
-                    </p>
-                  </div>
-
-                  {/* File Metadata footer */}
-                  <div className="flex justify-between items-center text-[10px] text-slate-500 border-t border-slate-900/60 pt-2.5 mt-1 font-mono">
-                    <span className="truncate max-w-[200px] text-slate-400 flex items-center gap-1">
-                      <FileText className="h-3 w-3 text-slate-500 shrink-0" />
-                      {issue.file.split(/[\\/]/).pop()}
-                    </span>
-                    <span className={`text-[10px] font-bold transition-all flex items-center gap-0.5 ${
+                  <button
+                    onClick={() => { 
+                      setSelectedSecurityIssue(issue); 
+                      setSecurityFixed(issue.isFixed || false); 
+                    }}
+                    className={`w-full text-left p-4 rounded-xl border-l-4 border border-t border-r border-b transition-all duration-300 flex flex-col gap-2.5 cursor-pointer relative overflow-hidden group ${
+                      getSeverityBorderColor(issue.severity, isFixed || false)
+                    } ${
                       isFixed 
-                        ? "text-emerald-400" 
-                        : isSelected 
-                          ? "text-rose-400" 
-                          : "text-indigo-400 group-hover:translate-x-0.5"
-                    }`}>
-                      {isFixed ? "Mitigated" : isSelected ? "Inspecting" : "Mitigate"} 
-                      <ChevronRight className="h-3 w-3" />
-                    </span>
-                  </div>
-                </button>
+                        ? "bg-emerald-950/5 border-t-emerald-950/40 border-r-emerald-950/40 border-b-emerald-950/40 hover:bg-emerald-950/10" 
+                        : isSelected
+                          ? "bg-slate-900/90 border-t-slate-700 border-r-slate-700 border-b-slate-700 shadow-[0_0_20px_rgba(244,63,94,0.06)] shadow-lg" 
+                          : "bg-slate-900/30 hover:bg-slate-900/50 border-t-slate-900 border-r-slate-900 border-b-slate-900 hover:border-t-slate-800 hover:border-r-slate-800 hover:border-b-slate-800 hover:shadow-md"
+                    }`}
+                  >
+                    {/* Ambient glow for critical severity */}
+                    {issue.severity === "Critical" && !isFixed && (
+                      <div className="absolute top-0 right-0 w-24 h-24 bg-rose-500/5 blur-2xl rounded-full pointer-events-none" />
+                    )}
+
+                    {/* Header info */}
+                    <div className="flex justify-between items-center w-full">
+                      <div className="flex items-center gap-2">
+                        {isFixed ? (
+                          <span className="bg-emerald-950/60 text-emerald-400 border border-emerald-900/60 text-[9px] font-extrabold px-2 py-0.5 rounded uppercase tracking-wider font-mono flex items-center gap-1">
+                            <ShieldCheck className="h-3 w-3" /> Mitigated
+                          </span>
+                        ) : (
+                          <span className={`${getSeverityStyle(issue.severity)} px-2 py-0.5 rounded border flex items-center gap-1.5`}>
+                            {/* Animated pulsing dot for Critical severity */}
+                            {issue.severity === "Critical" && (
+                              <span className="relative flex h-1.5 w-1.5">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75" />
+                                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-rose-500" />
+                              </span>
+                            )}
+                            <SeverityBadge severity={issue.severity} />
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-slate-500 font-mono bg-slate-950/80 px-2 py-0.5 border border-slate-900 rounded">
+                          Line {issue.line || "N/A"}
+                        </span>
+                        {/* Expand/Collapse toggle */}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); toggleCardExpand(originalIdx); }}
+                          className="text-slate-500 hover:text-slate-300 p-0.5 transition-colors cursor-pointer"
+                          title={isExpanded ? "Collapse" : "Expand preview"}
+                        >
+                          {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Category Title */}
+                    <div className="space-y-1">
+                      <h4 className={`text-xs font-bold font-sans flex items-center gap-1.5 ${
+                        isFixed ? "text-slate-500 line-through" : "text-white"
+                      }`}>
+                        {getCategoryIcon(issue.category)}
+                        {issue.category}
+                      </h4>
+                      <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed font-sans">
+                        {issue.description}
+                      </p>
+                    </div>
+
+                    {/* Expandable Detail Section */}
+                    <IssueExpandedDetail issue={issue} isExpanded={isExpanded} />
+
+                    {/* File Metadata footer */}
+                    <div className="flex justify-between items-center text-[10px] text-slate-500 border-t border-slate-900/60 pt-2.5 mt-1 font-mono">
+                      <span className="truncate max-w-[200px] text-slate-400 flex items-center gap-1">
+                        <FileText className="h-3 w-3 text-slate-500 shrink-0" />
+                        {issue.file.split(/[\\/]/).pop()}
+                      </span>
+                      <span className={`text-[10px] font-bold transition-all flex items-center gap-0.5 ${
+                        isFixed 
+                          ? "text-emerald-400" 
+                          : isSelected 
+                            ? "text-rose-400" 
+                            : "text-indigo-400 group-hover:translate-x-0.5"
+                      }`}>
+                        {isFixed ? "Mitigated" : isSelected ? "Inspecting" : "Mitigate"} 
+                        <ChevronRight className="h-3 w-3" />
+                      </span>
+                    </div>
+                  </button>
+                </div>
               );
             })}
+
+            {/* Empty state when filters yield no results */}
+            {filteredIssues.length === 0 && issues.length > 0 && (
+              <div className="bg-slate-900/30 text-slate-400 p-6 rounded-xl border border-slate-900/60 text-xs text-center font-sans space-y-2">
+                <Search className="h-6 w-6 text-slate-600 mx-auto" />
+                <p className="font-bold text-slate-300">No matching issues found</p>
+                <p className="text-slate-500 text-[11px]">Try adjusting your filters or search query.</p>
+              </div>
+            )}
 
             {issues.length === 0 && (
               <div className="bg-emerald-950/15 text-emerald-400 p-8 rounded-xl border border-emerald-900/30 text-xs text-center font-sans space-y-2">
@@ -512,7 +866,7 @@ export const SecurityTab: React.FC<SecurityTabProps> = ({
         {/* Right Columns: Security Sandbox Terminal & Code Diff */}
         <div className="lg:col-span-7">
           {selectedIssueExtended ? (
-            <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-2xl border border-slate-800/90 shadow-2xl space-y-5 flex flex-col relative overflow-hidden">
+            <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-2xl border border-slate-800/90 shadow-2xl space-y-5 flex flex-col relative overflow-hidden animate-fade-slide-in">
               
               {/* Window Controls Decorator */}
               <div className="border-b border-slate-950/60 pb-3 flex justify-between items-center">
@@ -554,6 +908,16 @@ export const SecurityTab: React.FC<SecurityTabProps> = ({
                   <div className="flex items-center gap-1.5">
                     <AlertTriangle className="h-4.5 w-4.5 text-rose-400 shrink-0" />
                     <h4 className="text-xs font-bold text-white font-sans">{selectedIssueExtended.category}</h4>
+                    {/* Severity badge in detail panel */}
+                    <span className={`${getSeverityStyle(selectedIssueExtended.severity)} px-1.5 py-0.5 rounded border ml-auto flex items-center gap-1`}>
+                      {selectedIssueExtended.severity === "Critical" && (
+                        <span className="relative flex h-1.5 w-1.5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75" />
+                          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-rose-500" />
+                        </span>
+                      )}
+                      <span className="text-[9px] font-extrabold font-mono uppercase tracking-wider">{selectedIssueExtended.severity}</span>
+                    </span>
                   </div>
                   <p className="text-[11px] text-slate-400 leading-normal">
                     {selectedIssueExtended.description}

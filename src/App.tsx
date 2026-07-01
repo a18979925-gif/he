@@ -1,14 +1,32 @@
 import React, { useState, useEffect } from "react";
-import { Cpu } from "lucide-react";
+import { Cpu, Sparkles, Lock, CreditCard, RefreshCw } from "lucide-react";
 import JSZip from "jszip";
 import { CodeScopeAnalysis, EndpointItem, DBTable, SecurityIssue, RefactoringSuggestion } from "./types";
 import { Header } from "./components/layout/Header";
 import { HomePage } from "./pages/HomePage";
-import { UploadZone } from "./components/UploadZone";
+import { MainScreen } from "./components/MainScreen";
+import { AuthPage } from "./components/AuthPage";
 import { springBootEcommerce, laravelBlog, expressPrisma } from "./data/samples";
 import { MOCK_FILES, getFallbackContent } from "./data/mockFiles";
+import { auth } from "./firebase";
+import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
+import TeamDashboard from "./components/team/TeamDashboard";
 
 export default function App() {
+  // Authentication State
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+      setIsAuthenticated(!!user);
+      setIsAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
   // Projects State
   const [activeProject, setActiveProject] = useState<CodeScopeAnalysis | null>(null);
   const [projectSource, setProjectSource] = useState<'sample' | 'uploaded'>('uploaded');
@@ -84,6 +102,46 @@ export default function App() {
 
   // Recent Projects cache list
   const [recentProjects, setRecentProjects] = useState<any[]>([]);
+
+  // Team Dashboard from URL
+  const [showTeamDashboard, setShowTeamDashboard] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const teamId = params.get('team');
+    if (teamId) {
+      setShowTeamDashboard(teamId);
+    }
+
+    // Listen for team project load events
+    const handleLoadTeamProject = async (event: CustomEvent) => {
+      const { projectId, teamId } = event.detail;
+      try {
+        setIsUploading(true);
+        setUploadProgress(`Loading team project from team ${teamId}...`);
+        
+        const response = await fetch(`/api/teams/${teamId}/projects/${projectId}`);
+        if (response.ok) {
+          const projectData = await response.json();
+          setActiveProject(projectData);
+          setProjectSource('uploaded');
+          setActiveTab("dashboard");
+          setShowTeamDashboard(null);
+        } else {
+          alert("Failed to load team project");
+        }
+      } catch (err: any) {
+        alert("Error loading team project: " + err.message);
+      } finally {
+        setIsUploading(false);
+      }
+    };
+
+    window.addEventListener('loadTeamProject', handleLoadTeamProject as EventListener);
+    return () => {
+      window.removeEventListener('loadTeamProject', handleLoadTeamProject as EventListener);
+    };
+  }, []);
 
   const fetchRecentProjects = async () => {
     try {
@@ -215,6 +273,92 @@ export default function App() {
   };
 
   // Handle ZIP file upload in browser using JSZip
+  // File selection states for ZIP analysis
+  const [activeFixIssue, setActiveFixIssue] = useState<any | null>(null);
+  const [showFilePicker, setShowFilePicker] = useState<boolean>(false);
+  const [zipFilesList, setZipFilesList] = useState<string[]>([]);
+  const [selectedFilesToAudit, setSelectedFilesToAudit] = useState<string[]>([]);
+  const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null);
+  const [pendingFileList, setPendingFileList] = useState<Array<{ name: string; size: number; content?: string }>>([]);
+
+  // Scan Count and Pricing
+  const [scanCount, setScanCount] = useState<number>(() => {
+    const val = localStorage.getItem("codescope_scan_count");
+    return val ? parseInt(val, 10) : 0;
+  });
+
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<'card' | 'blik' | 'gpay'>('card');
+  const [blikCode, setBlikCode] = useState('');
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardName, setCardName] = useState('');
+  const [cardExpiry, setCardExpiry] = useState('');
+  const [cardCvv, setCardCvv] = useState('');
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [paymentStep, setPaymentStep] = useState('');
+
+  const calculateScanPrice = (fileCount: number) => {
+    if (scanCount === 0) {
+      if (fileCount <= 40) return 0;
+      const extra = fileCount - 40;
+      const rate = fileCount >= 100 ? 0.08 : 0.10;
+      return extra * rate;
+    } else {
+      const rate = fileCount >= 100 ? 0.08 : 0.10;
+      return fileCount * rate;
+    }
+  };
+
+  const handleStartClicked = () => {
+    if (!pendingUploadFile) return;
+    const price = calculateScanPrice(selectedFilesToAudit.length);
+    if (price > 0) {
+      setIsPaymentModalOpen(true);
+    } else {
+      executeAnalysis();
+    }
+  };
+
+  const handlePayAndStart = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsProcessingPayment(true);
+    
+    if (paymentMethod === 'blik') {
+      setPaymentStep('Inicjowanie transakcji BLIK...');
+      await new Promise(r => setTimeout(r, 600));
+      setPaymentStep('Wysyłanie żądania autoryzacji do banku...');
+      await new Promise(r => setTimeout(r, 800));
+      setPaymentStep('Oczekiwanie na potwierdzenie w aplikacji mobilnej banku (BLIK)...');
+      await new Promise(r => setTimeout(r, 1400));
+      setPaymentStep('Płatność autoryzowana pomyślnie! Rozpoczynanie audytu...');
+      await new Promise(r => setTimeout(r, 600));
+    } else if (paymentMethod === 'gpay') {
+      setPaymentStep('Inicjowanie transakcji Google Pay...');
+      await new Promise(r => setTimeout(r, 600));
+      setPaymentStep('Autoryzacja portfela cyfrowego i tokenu płatności...');
+      await new Promise(r => setTimeout(r, 900));
+      setPaymentStep('Płatność autoryzowana pomyślnie! Rozpoczynanie audytu...');
+      await new Promise(r => setTimeout(r, 600));
+    } else {
+      setPaymentStep('Inicjowanie bezpiecznej transakcji SSL 256-bit...');
+      await new Promise(r => setTimeout(r, 600));
+      setPaymentStep('Weryfikacja karty przez bank i 3D-Secure...');
+      await new Promise(r => setTimeout(r, 800));
+      setPaymentStep('Płatność autoryzowana pomyślnie! Rozpoczynanie audytu...');
+      await new Promise(r => setTimeout(r, 600));
+    }
+    
+    setIsProcessingPayment(false);
+    setIsPaymentModalOpen(false);
+    
+    await executeAnalysis();
+  };
+
+  const handleBypassPayment = async () => {
+    setIsPaymentModalOpen(false);
+    await executeAnalysis();
+  };
+
   const handleZipUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -233,11 +377,9 @@ export default function App() {
       
       setUploadProgress(`Extracting project hierarchy (${fileNames.length} nodes)...`);
       
-      let processed = 0;
       for (const filename of fileNames) {
         const zipFile = contents.files[filename];
         if (!zipFile.dir) {
-          // Read contents of important files (config or code files) for static analysis
           const ext = pathExtension(filename).toLowerCase();
           const shouldRead = 
             filename.includes("package.json") ||
@@ -251,37 +393,65 @@ export default function App() {
             filename.includes("route") ||
             ext === ".sql" ||
             ext === ".ts" ||
+            ext === ".tsx" ||
             ext === ".js" ||
+            ext === ".jsx" ||
             ext === ".py" ||
             ext === ".java" ||
-            ext === ".php";
+            ext === ".php" ||
+            ext === ".go" ||
+            ext === ".rs";
             
           let fileText = "";
           if (shouldRead && zipFile.async) {
             fileText = await zipFile.async("text");
           }
           
-          // Get metadata
           const fileData = await zipFile.async("uint8array");
           fileList.push({
             name: filename,
             size: fileData.length,
-            content: fileText ? fileText.substring(0, 15000) : undefined // Limit to first 15KB per file context
+            content: fileText ? fileText.substring(0, 15000) : undefined
           });
         }
-        processed++;
       }
 
-      setUploadProgress("Uploading file map for AI intelligence scan...");
-      setUploadedZipFiles(fileList);
+      // Filter source code files for picker checkboxes
+      const selectableFiles = fileList.filter(f => {
+        const ext = f.name.split('.').pop()?.toLowerCase();
+        const codeExtensions = ['js', 'jsx', 'ts', 'tsx', 'py', 'go', 'rs', 'java', 'sql', 'php', 'json', 'yml', 'yaml', 'xml', 'properties'];
+        return ext && codeExtensions.includes(ext);
+      }).map(f => f.name);
 
-      // Trigger server endpoint POST /api/analyze
+      setZipFilesList(selectableFiles);
+      setSelectedFilesToAudit(selectableFiles.slice(0, 6)); // Default to first 6 files
+      setPendingUploadFile(file);
+      setPendingFileList(fileList);
+      
+      setIsUploading(false);
+      setShowFilePicker(true);
+    } catch (err) {
+      console.error(err);
+      setIsUploading(false);
+      setUploadProgress("Failed to read ZIP archive.");
+    }
+  };
+
+  const executeAnalysis = async () => {
+    if (!pendingUploadFile) return;
+    try {
+      setShowFilePicker(false);
+      setIsUploading(true);
+      setUploadProgress("Uploading file map for AI intelligence scan...");
+      setUploadedZipFiles(pendingFileList);
+
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          projectName: file.name.replace(".zip", ""),
-          files: fileList
+          projectName: pendingUploadFile.name.replace(".zip", ""),
+          files: pendingFileList,
+          selectedFiles: selectedFilesToAudit
         })
       });
 
@@ -292,22 +462,25 @@ export default function App() {
       const report: CodeScopeAnalysis = await response.json();
       setUploadProgress("Finalizing Interactive Graph Layouts...");
       
-      // Inject files list into files database if not fully present in the returned JSON
       if (!report.importAnalysis) report.importAnalysis = { largestFiles: [], circularDependencies: [], packageCouplingScore: 50 };
       if (!report.importAnalysis.largestFiles || report.importAnalysis.largestFiles.length === 0) {
-        const sorted = [...fileList].sort((a, b) => b.size - a.size).slice(0, 5);
+        const sorted = [...pendingFileList].sort((a, b) => b.size - a.size).slice(0, 5);
         report.importAnalysis.largestFiles = sorted.map(sf => ({
           file: sf.name,
           size: sf.size > 1024 ? `${(sf.size / 1024).toFixed(1)} KB` : `${sf.size} B`
         }));
       }
 
-      // Add actual zip files as search candidates
       setActiveProject(report);
       setUploadProgress("Complete!");
       setTimeout(() => {
         setIsUploading(false);
         setActiveTab("dashboard");
+        setScanCount(prev => {
+          const next = prev + 1;
+          localStorage.setItem("codescope_scan_count", next.toString());
+          return next;
+        });
       }, 500);
 
     } catch (err) {
@@ -666,6 +839,88 @@ ${activeProject.architecture.explanation}
     }
   };
 
+  const handleSaveFile = async (filePath: string, content: string) => {
+    if (projectSource === 'sample') {
+      setIsUploading(true);
+      setUploadProgress("Saving virtual sample file and re-running diagnostics...");
+      await new Promise(resolve => setTimeout(resolve, 600));
+      
+      setSampleCodeOverrides(prev => ({
+        ...prev,
+        [filePath]: content
+      }));
+
+      // Simulate diagnostic refresh
+      if (activeProject) {
+        const updatedProject = { ...activeProject };
+        updatedProject.healthScore = Math.min(100, updatedProject.healthScore + 1);
+        setActiveProject(updatedProject);
+      }
+      setIsUploading(false);
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/save-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filePath, content })
+      });
+      if (!response.ok) {
+        let errMsg = `Server returned status ${response.status}`;
+        try {
+          const err = await response.json();
+          errMsg = err.error || errMsg;
+        } catch {
+          try {
+            errMsg = await response.text() || errMsg;
+          } catch {}
+        }
+        alert(`Failed to save file on disk: ${errMsg}`);
+        return;
+      }
+    } catch (err: any) {
+      console.error("Local filesystem write failed", err);
+      alert(`Save operation failed: ${err.message}`);
+      return;
+    }
+
+    const updatedFiles = uploadedZipFiles.map(file => {
+      if (file.name === filePath) {
+        return {
+          ...file,
+          content: content
+        };
+      }
+      return file;
+    });
+    setUploadedZipFiles(updatedFiles);
+
+    try {
+      setIsUploading(true);
+      setUploadProgress("Code modified. Re-running diagnostics hub...");
+      
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectName: activeProject?.projectName || "Repaired Codebase",
+          files: updatedFiles,
+          selectedFiles: selectedFilesToAudit
+        })
+      });
+
+      if (!response.ok) throw new Error("API analysis request failed");
+      const report: CodeScopeAnalysis = await response.json();
+      setActiveProject(report);
+    } catch (err: any) {
+      console.error(err);
+      alert(`File saved on disk, but re-analysis failed: ${err.message}`);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const handleLoadSampleProject = (sampleName: 'ecommerce' | 'microservice' | 'fintech') => {
     let sample: CodeScopeAnalysis;
     if (sampleName === 'ecommerce') sample = springBootEcommerce;
@@ -684,21 +939,58 @@ ${activeProject.architecture.explanation}
     setActiveTab("dashboard");
   };
 
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-[#07070a] flex flex-col justify-center items-center text-white font-sans">
+        <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-indigo-500 mb-4"></div>
+        <p className="text-xs text-slate-400 font-mono">Verifying secure session...</p>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <AuthPage onLoginSuccess={() => setIsAuthenticated(true)} />;
+  }
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans" id="codescope-root">
+    <>
+      {showTeamDashboard && (
+        <TeamDashboard teamId={showTeamDashboard} onClose={() => setShowTeamDashboard(null)} />
+      )}
+      <div className="min-h-screen bg-[#07070a] text-slate-100 flex flex-col font-sans" id="codescope-root">
       
-      {/* Dynamic Full Screen Loading Overlay */}
+      {/* Premium Dynamic Full Screen Loading Overlay */}
       {isUploading && (
-        <div className="fixed inset-0 bg-slate-900/90 flex flex-col justify-center items-center z-50 text-white px-4">
-          <div className="relative flex justify-center items-center mb-6">
-            <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-indigo-500"></div>
-            <Cpu className="absolute text-indigo-400 h-6 w-6 animate-pulse" />
+        <div className="fixed inset-0 bg-[#07070a]/95 backdrop-blur-md flex flex-col justify-center items-center z-50 text-white px-4 overflow-hidden">
+          {/* Orbital Backgrounds */}
+          <div className="absolute top-1/4 left-1/4 w-[400px] h-[400px] bg-indigo-500/10 rounded-full blur-[100px] pointer-events-none animate-pulse" />
+          <div className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] bg-emerald-500/5 rounded-full blur-[120px] pointer-events-none animate-pulse" style={{ animationDelay: '1s' }} />
+          
+          <div className="relative flex justify-center items-center mb-8">
+            <div className="absolute inset-0 bg-indigo-500/20 blur-xl rounded-full" />
+            <div className="relative w-20 h-20 bg-indigo-950/40 border border-indigo-500/30 rounded-2xl flex items-center justify-center shadow-[0_0_30px_rgba(99,102,241,0.2)]">
+              <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.1),transparent)] bg-[length:200%_100%] animate-[shimmer_2s_infinite]" />
+              <Cpu className="text-indigo-400 h-8 w-8 relative z-10" />
+            </div>
+            {/* Spinning ring */}
+            <div className="absolute -inset-4 border border-indigo-500/20 border-t-indigo-400 rounded-full animate-spin" style={{ animationDuration: '3s' }} />
+            <div className="absolute -inset-8 border border-emerald-500/10 border-b-emerald-400/50 rounded-full animate-spin" style={{ animationDuration: '4s', animationDirection: 'reverse' }} />
           </div>
-          <h2 className="text-xl font-medium mb-2 tracking-tight">Parser Engine Scanning...</h2>
-          <p className="text-indigo-300 font-mono text-sm max-w-md text-center bg-slate-800 py-2 px-4 rounded border border-indigo-950">
-            {uploadProgress}
+
+          <h2 className="text-2xl font-black mb-3 tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400">
+            Parser Engine Scanning
+          </h2>
+          
+          <div className="bg-slate-900/60 border border-indigo-500/20 py-3 px-6 rounded-xl shadow-lg flex items-center gap-3 min-w-[300px] max-w-md w-full mb-6">
+            <div className="w-4 h-4 border-2 border-indigo-500/30 border-t-indigo-400 rounded-full animate-spin flex-shrink-0" />
+            <p className="text-indigo-200 font-mono text-xs w-full text-center tracking-wide">
+              {uploadProgress}
+            </p>
+          </div>
+
+          <p className="text-slate-500 text-[11px] uppercase tracking-widest font-bold">
+            Analyzing project file graphs & building AST mapping model
           </p>
-          <p className="text-slate-400 text-xs mt-4">Analyzing project file graphs & building AST mapping model</p>
         </div>
       )}
 
@@ -754,6 +1046,8 @@ ${activeProject.architecture.explanation}
           setSelectedTable={setSelectedTable}
           selectedFile={selectedFile}
           setSelectedFile={setSelectedFile}
+          activeFixIssue={activeFixIssue}
+          setActiveFixIssue={setActiveFixIssue}
           fileSearchQuery={fileSearchQuery}
           setFileSearchQuery={setFileSearchQuery}
           codeSearchQuery={codeSearchQuery}
@@ -788,10 +1082,93 @@ ${activeProject.architecture.explanation}
           sqlError={sqlError}
           copyFeedback={copyFeedback}
           copyTextToClipboard={copyTextToClipboard}
+          onSaveFile={handleSaveFile}
           onFixIssue={handleAutoFixIssue}
         />
+      ) : showFilePicker ? (
+        <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 md:p-8">
+          <div className="max-w-md w-full bg-[#141417] p-6 rounded-2xl border border-[#222228] space-y-4 text-left shadow-2xl">
+            <div className="flex items-center gap-2 text-indigo-400">
+              <Sparkles size={18} />
+              <h3 className="text-sm font-bold uppercase tracking-wider text-[#f1f1f5]">Wybierz pliki do analizy AI</h3>
+            </div>
+            <p className="text-xs text-[#9ea4b0]">
+              Wybierz pliki z archiwum, które chcesz poddać audytowi AI. Bazowy plan obejmuje do 6 plików bez dodatkowych opłat.
+            </p>
+            
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedFilesToAudit(zipFilesList)}
+                className="text-[10px] text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
+              >
+                Zaznacz wszystkie
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedFilesToAudit([])}
+                className="text-[10px] text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
+              >
+                Odznacz wszystkie
+              </button>
+            </div>
+
+            <div className="max-h-60 overflow-y-auto border border-[#222228] rounded-lg divide-y divide-[#222228] bg-[#0d0d0f]/40 scrollbar-thin">
+              {zipFilesList.map((filename) => {
+                const isChecked = selectedFilesToAudit.includes(filename);
+                return (
+                  <label key={filename} className="flex items-center gap-2.5 px-3 py-2 text-xs text-[#d1d1d6] hover:bg-[#1a1a1f] cursor-pointer transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedFilesToAudit(prev => [...prev, filename]);
+                        } else {
+                          setSelectedFilesToAudit(prev => prev.filter(f => f !== filename));
+                        }
+                      }}
+                      className="accent-indigo-500 rounded border-slate-700 bg-slate-850"
+                    />
+                    <span className="truncate select-none">{filename}</span>
+                  </label>
+                );
+              })}
+            </div>
+
+            <div className="flex justify-between items-center text-xs font-semibold pt-2 border-t border-[#222228]">
+              <div className="flex flex-col text-[#9ea4b0]">
+                <span>Wybrano plików: {selectedFilesToAudit.length}</span>
+                <span className="text-[10px] text-slate-500 font-medium">
+                  {scanCount === 0 ? "Pierwszy skan (do 40 plik. darmowy)" : "Kolejny skan (płatny każdy plik)"}
+                </span>
+              </div>
+              <span className="text-amber-400 font-bold text-sm">
+                Cena: {calculateScanPrice(selectedFilesToAudit.length).toFixed(2).replace('.', ',')} PLN
+              </span>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => {
+                  setShowFilePicker(false);
+                  setPendingUploadFile(null);
+                }}
+                className="flex-1 py-2 border border-[#222228] text-[#9ea4b0] rounded-lg text-xs font-semibold hover:bg-[#1a1a1f] transition-colors"
+              >
+                Wróć
+              </button>
+              <button
+                onClick={handleStartClicked}
+                className="flex-1 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-lg text-xs font-bold transition-all shadow-md text-center"
+              >
+                Uruchom analizę
+              </button>
+            </div>
+          </div>
+        </div>
       ) : (
-        <UploadZone
+        <MainScreen
           isDragging={isDragging}
           setIsDragging={setIsDragging}
           gitRepoUrl={gitRepoUrl}
@@ -801,8 +1178,263 @@ ${activeProject.architecture.explanation}
           recentProjects={recentProjects}
           handleSelectRecentProject={handleSelectRecentProject}
           handleLoadSampleProject={handleLoadSampleProject}
+          setShowSettings={setShowSettings}
+          setActiveTab={setActiveTab}
         />
+      
+      )}
+
+      {/* Mock Payment Gateway Modal */}
+      {isPaymentModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl border border-slate-100 shadow-2xl max-w-md w-full overflow-hidden text-slate-900 animate-in fade-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="bg-slate-900 p-6 text-white relative text-left">
+              <div className="absolute top-4 right-4">
+                <button 
+                  type="button"
+                  onClick={() => setIsPaymentModalOpen(false)} 
+                  className="text-slate-400 hover:text-white transition-colors text-sm font-bold p-1 cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="flex items-center gap-1 text-blue-400 font-bold uppercase tracking-wider text-[10px]">
+                <Lock size={12} className="text-blue-400" /> Bezpieczna płatność testowa
+              </div>
+              <h3 className="text-lg font-black tracking-tight mt-1">Stripe Checkout Simulation</h3>
+              <p className="text-xs text-slate-400 mt-1">Zatwierdź transakcję, aby odblokować dedykowany audyt.</p>
+            </div>
+
+            {/* Simulated Receipt */}
+            <div className="p-6 bg-slate-50/50 border-b border-slate-100 flex justify-between items-center text-xs text-left">
+              <div>
+                <span className="text-slate-400 font-semibold uppercase block text-[8px] tracking-wider">Plan:</span>
+                <span className="font-bold text-slate-700">
+                  Dedykowana analiza kodu AI
+                </span>
+              </div>
+              <div className="text-right">
+                <span className="text-slate-400 font-semibold uppercase block text-[8px] tracking-wider">Do zapłaty:</span>
+                <span className="text-base font-black text-slate-900">
+                  {calculateScanPrice(selectedFilesToAudit.length).toFixed(2).replace('.', ',')} PLN
+                </span>
+              </div>
+            </div>
+
+            {/* Payment Method Selector */}
+            <div className="flex bg-slate-100 rounded-lg p-1 mx-6 mt-4 border border-slate-200">
+              <button
+                type="button"
+                onClick={() => setPaymentMethod('card')}
+                className={`flex-1 py-1 text-[10px] font-bold rounded-md transition-all ${paymentMethod === 'card' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-850'}`}
+              >
+                Karta
+              </button>
+              <button
+                type="button"
+                onClick={() => setPaymentMethod('blik')}
+                className={`flex-1 py-1 text-[10px] font-bold rounded-md transition-all ${paymentMethod === 'blik' ? 'bg-pink-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-850'}`}
+              >
+                BLIK
+              </button>
+              <button
+                type="button"
+                onClick={() => setPaymentMethod('gpay')}
+                className={`flex-1 py-1 text-[10px] font-bold rounded-md transition-all ${paymentMethod === 'gpay' ? 'bg-slate-950 text-white shadow-xs' : 'text-slate-500 hover:text-slate-850'}`}
+              >
+                GPay
+              </button>
+            </div>
+
+            {/* Credit Card Graphic mockup */}
+            {paymentMethod === 'card' && (
+              <div className="px-6 pt-5">
+                <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white p-5 rounded-2xl shadow-lg relative overflow-hidden aspect-[1.586/1] flex flex-col justify-between text-left">
+                  <div className="flex justify-between items-start">
+                    <div className="w-10 h-7 bg-amber-400/80 rounded-md border border-amber-300/40 relative overflow-hidden flex items-center justify-center">
+                      <div className="grid grid-cols-3 gap-0.5 w-full h-full p-1 opacity-60">
+                        {[...Array(6)].map((_, i) => <div key={i} className="border border-slate-900 rounded-2xs" />)}
+                      </div>
+                    </div>
+                    <span className="text-xs font-black italic tracking-widest text-slate-300 uppercase">
+                      {cardNumber.startsWith('4') ? 'Visa' : cardNumber.startsWith('5') ? 'Mastercard' : 'Test Card'}
+                    </span>
+                  </div>
+
+                  <div className="text-lg font-mono font-bold tracking-widest text-center my-3 select-all">
+                    {cardNumber || '•••• •••• •••• ••••'}
+                  </div>
+
+                  <div className="flex justify-between items-end text-xs font-mono uppercase text-slate-300">
+                    <div>
+                      <span className="text-[7px] text-slate-400 block tracking-wider font-sans">Właściciel karty</span>
+                      <span className="truncate max-w-[180px] inline-block font-semibold">{cardName || 'JAN KOWALSKI'}</span>
+                    </div>
+                    <div className="text-right flex flex-col items-end">
+                      <span className="text-[7px] text-slate-400 block tracking-wider font-sans">Ważność</span>
+                      <span className="font-semibold">{cardExpiry || '12/29'}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* BLIK Graphics */}
+            {paymentMethod === 'blik' && (
+              <div className="px-6 pt-5 text-center">
+                <div className="bg-slate-50 border border-slate-200/60 p-6 rounded-2xl flex flex-col items-center justify-center gap-2.5">
+                  <div className="bg-pink-600 text-white px-5 py-2 rounded-xl font-black italic tracking-widest text-lg shadow-sm select-none">
+                    blik
+                  </div>
+                  <p className="text-[10px] text-slate-400 max-w-[220px] mx-auto leading-relaxed">
+                    Wprowadź 6-cyfrowy kod BLIK z aplikacji bankowej i zatwierdź go na swoim telefonie po kliknięciu Autoryzuj.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* GPay Graphics */}
+            {paymentMethod === 'gpay' && (
+              <div className="px-6 pt-5 text-center">
+                <div className="bg-slate-50 border border-slate-200/60 p-8 rounded-2xl flex flex-col items-center justify-center gap-3">
+                  <div className="bg-slate-950 text-white px-6 py-2 rounded-xl font-bold flex items-center gap-1.5 shadow-sm text-sm tracking-wide justify-center">
+                    <Sparkles className="h-4 w-4 text-indigo-400 animate-pulse" /> Google Pay
+                  </div>
+                  <p className="text-[10px] text-slate-400 max-w-[220px] mx-auto leading-relaxed">
+                    Szybka autoryzacja za pomocą karty płatniczej przypisanej do Twojego konta Google.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Input fields form */}
+            <form onSubmit={handlePayAndStart} className="p-6 space-y-4">
+              {paymentMethod === 'card' && (
+                <div className="space-y-3">
+                  <div className="text-left">
+                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Numer karty</label>
+                    <div className="relative">
+                      <CreditCard size={14} className="absolute left-3 top-3.5 text-slate-400" />
+                      <input 
+                        type="text" 
+                        required
+                        placeholder="4242 4242 4242 4242" 
+                        value={cardNumber}
+                        maxLength={19}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, '').replace(/(.{4})/g, '$1 ').trim();
+                          setCardNumber(val);
+                        }}
+                        className="w-full bg-slate-50 border border-slate-200/80 rounded-xl pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-slate-850 focus:bg-white font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="text-left">
+                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Imię i nazwisko właściciela</label>
+                    <input 
+                      type="text" 
+                      required
+                      placeholder="JAN KOWALSKI" 
+                      value={cardName}
+                      onChange={(e) => setCardName(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200/80 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-slate-850 focus:bg-white font-mono uppercase"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-left">
+                    <div>
+                      <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Ważność (MM/YY)</label>
+                      <input 
+                        type="text" 
+                        required
+                        placeholder="12/29" 
+                        value={cardExpiry}
+                        maxLength={5}
+                        onChange={(e) => {
+                          let val = e.target.value.replace(/\D/g, '');
+                          if (val.length > 2) {
+                            val = val.substring(0, 2) + '/' + val.substring(2, 4);
+                          }
+                          setCardExpiry(val);
+                        }}
+                        className="w-full bg-slate-50 border border-slate-200/80 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-slate-850 focus:bg-white font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">CVV</label>
+                      <input 
+                        type="password" 
+                        required
+                        placeholder="123" 
+                        value={cardCvv}
+                        maxLength={3}
+                        onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, ''))}
+                        className="w-full bg-slate-50 border border-slate-200/80 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-slate-850 focus:bg-white font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {paymentMethod === 'blik' && (
+                <div className="text-left">
+                  <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1 font-sans">Kod BLIK</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="123 456" 
+                    value={blikCode}
+                    maxLength={7}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, '').replace(/(.{3})/g, '$1 ').trim();
+                      setBlikCode(val);
+                    }}
+                    className="w-full bg-slate-50 border border-slate-200/80 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-slate-850 focus:bg-white font-mono text-center text-lg font-bold tracking-widest"
+                  />
+                </div>
+              )}
+
+              <div className="pt-2">
+                {isProcessingPayment ? (
+                  <div className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold text-xs flex flex-col items-center justify-center gap-1 shadow-sm">
+                    <RefreshCw size={14} className="animate-spin text-blue-400" />
+                    <span className="text-[10px] text-slate-300 font-medium animate-pulse">{paymentStep}</span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <div className="flex gap-2">
+                      <button 
+                        type="button" 
+                        onClick={() => setIsPaymentModalOpen(false)} 
+                        className="flex-1 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+                      >
+                        Anuluj
+                      </button>
+                      <button 
+                        type="submit" 
+                        className="flex-1 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer"
+                      >
+                        <Lock size={12} /> Autoryzuj {calculateScanPrice(selectedFilesToAudit.length).toFixed(2).replace('.', ',')} PLN
+                      </button>
+                    </div>
+                    
+                    <button 
+                      type="button" 
+                      onClick={handleBypassPayment}
+                      className="w-full py-2 bg-indigo-50 hover:bg-indigo-100/80 text-indigo-600 border border-indigo-100 rounded-xl font-bold text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer active:scale-98"
+                    >
+                      <Sparkles size={12} className="text-indigo-500 animate-pulse" /> Pomiń płatność (Tryb testowy)
+                    </button>
+                  </div>
+                )}
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
+    </>
   );
 }

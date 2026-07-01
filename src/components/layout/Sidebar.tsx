@@ -13,9 +13,24 @@ import {
   ShieldAlert,
   TrendingUp,
   FileText,
-  Settings
+  Settings,
+  Sparkles,
+  LogOut,
+  Award,
+  Copy,
+  Lock,
+  Scale,
+  Shield,
+  Users,
+  MessageSquare,
+  Crown,
+  UserPlus
 } from "lucide-react";
 import { CodeScopeAnalysis } from "../../types";
+import { auth } from "../../firebase";
+import { onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
+import { useAuthStore, apiFetch } from "../../stores/authStore";
+
 
 interface SidebarProps {
   activeProject: CodeScopeAnalysis;
@@ -34,13 +49,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
   showSettings,
   setShowSettings,
 }) => {
+  const [currentUser, setCurrentUser] = React.useState<FirebaseUser | null>(auth.currentUser);
+
+  React.useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+    });
+    return () => unsubscribe();
+  }, []);
+
   return (
-    <aside className="lg:w-64 bg-slate-900 text-slate-400 border-r border-slate-800 flex flex-col justify-between shrink-0">
+    <aside className="lg:w-64 bg-[#0a0a0f]/80 backdrop-blur-xl text-slate-400 border-r border-indigo-500/10 flex flex-col justify-between shrink-0">
       <div className="p-4 flex-1">
         {/* Project status card */}
         <div className="mb-4">
-          <span className="text-slate-600 uppercase tracking-widest text-[10px] font-bold block mb-2 px-3">Project Status</span>
-          <div className="bg-slate-950 p-3 rounded-lg border border-slate-800/80">
+          <span className="text-slate-500 uppercase tracking-widest text-[10px] font-bold block mb-2 px-3">Project Status</span>
+          <div className="bg-[#0c0e14]/60 backdrop-blur-md p-3 rounded-xl border border-indigo-500/10 shadow-lg">
             <div className="flex items-center gap-2 mb-1.5">
               <div className={`h-2.5 w-2.5 rounded-full ${projectSource === 'sample' ? 'bg-emerald-500' : 'bg-indigo-500 animate-pulse'}`}></div>
               <span className="text-white text-xs font-semibold truncate block max-w-[170px]">{activeProject.projectName}</span>
@@ -68,6 +92,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
             <span className="bg-indigo-950/80 text-indigo-400 px-1.5 py-0.5 rounded text-[10px] font-bold font-mono">
               {activeProject.healthScore}%
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("cto-suite")}
+            className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium rounded-lg transition-all text-left ${activeTab === "cto-suite" ? "bg-slate-800 text-white font-semibold border-l-2 border-indigo-500 pl-2.5" : "hover:bg-slate-800/40 hover:text-slate-200"}`}
+          >
+            <div className="flex items-center gap-2.5">
+              <Sparkles className="h-4 w-4 text-indigo-400 animate-pulse" />
+              <span className="font-bold text-white">CTO Suite (Premium)</span>
+            </div>
+            <span className="bg-indigo-955 text-indigo-400 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold">
+              AI
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("total-analyze")}
+            className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium rounded-lg transition-all text-left ${activeTab === "total-analyze" ? "bg-slate-800 text-white font-semibold" : "hover:bg-slate-800/40 hover:text-slate-200"}`}
+          >
+            <div className="flex items-center gap-2.5">
+              <Sparkles className="h-4 w-4 text-indigo-400 animate-pulse" />
+              <span>Total Analyze</span>
+            </div>
+            <span className="bg-indigo-950 text-indigo-400 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold">
+              AI+
             </span>
           </button>
 
@@ -303,6 +353,68 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </span>
           </button>
 
+          <span className="text-slate-600 uppercase tracking-widest text-[10px] font-bold block mb-2 mt-4 px-3">Team Mode</span>
+
+          {/* Team Mode Section */}
+          <TeamModeSection setActiveTab={setActiveTab} activeTab={activeTab} />
+
+          <span className="text-slate-600 uppercase tracking-widest text-[10px] font-bold block mb-2 mt-4 px-3">Audit & Shields</span>
+
+          <button
+            onClick={() => setActiveTab("coverage")}
+            className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium rounded-lg transition-all text-left ${activeTab === "coverage" ? "bg-slate-800 text-white font-semibold" : "hover:bg-slate-800/40 hover:text-slate-200"}`}
+          >
+            <div className="flex items-center gap-2.5">
+              <Award className="h-4 w-4 text-emerald-400" />
+              <span>Test Coverage Explorer</span>
+            </div>
+            <span className="bg-emerald-950 text-emerald-400 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold">78%</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("duplication")}
+            className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium rounded-lg transition-all text-left ${activeTab === "duplication" ? "bg-slate-800 text-white font-semibold" : "hover:bg-slate-800/40 hover:text-slate-200"}`}
+          >
+            <div className="flex items-center gap-2.5">
+              <Copy className="h-4 w-4 text-cyan-400" />
+              <span>Duplicate Code Detector</span>
+            </div>
+            <span className="bg-cyan-950 text-cyan-400 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold">AST</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("secrets")}
+            className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium rounded-lg transition-all text-left ${activeTab === "secrets" ? "bg-slate-800 text-white font-semibold" : "hover:bg-slate-800/40 hover:text-slate-200"}`}
+          >
+            <div className="flex items-center gap-2.5">
+              <Lock className="h-4 w-4 text-amber-400" />
+              <span>Secret Scanner</span>
+            </div>
+            <span className="bg-amber-950 text-amber-400 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold">LOCK</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("license")}
+            className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium rounded-lg transition-all text-left ${activeTab === "license" ? "bg-slate-800 text-white font-semibold" : "hover:bg-slate-800/40 hover:text-slate-200"}`}
+          >
+            <div className="flex items-center gap-2.5">
+              <Scale className="h-4 w-4 text-sky-400" />
+              <span>License Compliance</span>
+            </div>
+            <span className="bg-sky-950 text-sky-400 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold">MIT</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("dep-vuln")}
+            className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium rounded-lg transition-all text-left ${activeTab === "dep-vuln" ? "bg-slate-800 text-white font-semibold" : "hover:bg-slate-800/40 hover:text-slate-200"}`}
+          >
+            <div className="flex items-center gap-2.5">
+              <Shield className="h-4 w-4 text-rose-400" />
+              <span>Dependency Vulnerabilities</span>
+            </div>
+            <span className="bg-rose-950 text-rose-405 text-rose-400 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold">CVE</span>
+          </button>
+
           <button
             onClick={() => setActiveTab("timeline")}
             className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium rounded-lg transition-all text-left ${activeTab === "timeline" ? "bg-slate-800 text-white font-semibold" : "hover:bg-slate-800/40 hover:text-slate-200"}`}
@@ -315,6 +427,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </nav>
       </div>
+
+      {/* User Profile Card */}
+      {currentUser && (
+        <div className="p-3 mx-4 mb-3 bg-slate-950 border border-slate-850 rounded-xl flex items-center justify-between gap-2.5 text-left shadow-lg shadow-slate-950/40 select-none">
+          <div className="flex items-center gap-2 min-w-0">
+            <img 
+              src={`https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(currentUser.email || "")}`} 
+              alt="User Avatar" 
+              className="w-7 h-7 rounded-lg bg-slate-900 border border-slate-800 shrink-0"
+            />
+            <div className="min-w-0">
+              <span className="text-white text-xs font-bold block truncate">
+                {currentUser.displayName || currentUser.email?.split("@")[0] || "User"}
+              </span>
+              <span className="text-[9px] text-slate-500 block truncate font-medium">
+                {currentUser.email === "admin@codescope.com" ? "Administrator" : "Security Engineer"}
+              </span>
+            </div>
+          </div>
+          <button 
+            onClick={() => signOut(auth)}
+            className="text-slate-500 hover:text-rose-450 hover:bg-slate-900/60 p-1.5 rounded-lg transition-all active:scale-95 cursor-pointer shrink-0 border border-transparent hover:border-slate-800"
+            title="Log Out"
+          >
+            <LogOut size={12} />
+          </button>
+        </div>
+      )}
 
       {/* Settings configuration trigger footer */}
       <div className="p-4 border-t border-slate-800 bg-slate-950/60">
@@ -331,3 +471,100 @@ export const Sidebar: React.FC<SidebarProps> = ({
     </aside>
   );
 };
+
+// ─── TeamModeSection ─────────────────────────────────────────────────────────
+// Lazy import to avoid circular deps
+const AuthModal = React.lazy(() => import("../auth/AuthModal"));
+const TeamDashboard = React.lazy(() => import("../team/TeamDashboard"));
+
+function TeamModeSection({ setActiveTab, activeTab }: { setActiveTab: (t: string) => void; activeTab: string }) {
+  const { user, teams, logout } = useAuthStore();
+  const [showAuth, setShowAuth] = React.useState(false);
+  const [showTeam, setShowTeam] = React.useState<string | null>(null);
+  const [showCreateTeam, setShowCreateTeam] = React.useState(false);
+  const [newTeamName, setNewTeamName] = React.useState("");
+
+  const handleCreateTeam = async () => {
+    if (!newTeamName.trim()) return;
+    try {
+      const team = await apiFetch("/api/auth/teams", { method: "POST", body: JSON.stringify({ name: newTeamName.trim() }) });
+      useAuthStore.getState().setTeams([...useAuthStore.getState().teams, team]);
+      setNewTeamName("");
+      setShowCreateTeam(false);
+      setShowTeam(team.id);
+    } catch (e: any) {
+      alert("Error: " + e.message);
+    }
+  };
+
+  return (
+    <>
+      {!user ? (
+        <div className="px-3 space-y-1.5">
+          <button
+            onClick={() => setShowAuth(true)}
+            className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-indigo-500/15 to-violet-500/15 border border-indigo-500/20 text-indigo-300 hover:from-indigo-500/25 hover:to-violet-500/25 transition-all"
+          >
+            <Users size={13} /> Login / Register
+          </button>
+          <p className="text-[9px] text-slate-600 text-center">Login to access Team Mode</p>
+        </div>
+      ) : (
+        <div className="px-3 space-y-2">
+          {/* User pill */}
+          <div className="flex items-center gap-2 bg-white/[0.03] border border-white/5 rounded-xl px-2.5 py-2">
+            <div className="h-6 w-6 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-[10px] font-black text-white shrink-0">
+              {user.username[0].toUpperCase()}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[11px] font-bold text-white truncate">@{user.username}</div>
+              <div className="text-[9px] text-slate-600">Solo mode</div>
+            </div>
+            <button onClick={logout} className="text-slate-600 hover:text-rose-400 transition-colors p-1" title="Logout">
+              <LogOut size={11} />
+            </button>
+          </div>
+
+          {/* Teams */}
+          {teams.length > 0 && (
+            <div className="space-y-1">
+              {teams.map((t: any) => (
+                <button key={t.id} onClick={() => window.open(`${window.location.origin}${window.location.pathname}?team=${t.id}`, '_blank')}
+                  className="w-full flex items-center gap-2 px-2.5 py-2 text-[11px] rounded-lg bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] transition-all text-slate-300">
+                  <Users size={12} className="text-indigo-400 shrink-0" />
+                  <span className="truncate font-semibold">{t.name}</span>
+                  <MessageSquare size={11} className="text-slate-600 ml-auto shrink-0" />
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Create team */}
+          {!showCreateTeam ? (
+            <button onClick={() => setShowCreateTeam(true)}
+              className="w-full flex items-center gap-2 px-2.5 py-2 text-[10px] font-semibold rounded-lg border border-dashed border-white/10 text-slate-500 hover:text-slate-300 hover:border-white/20 transition-all">
+              <UserPlus size={12} /> New Team
+            </button>
+          ) : (
+            <div className="space-y-1.5">
+              <input value={newTeamName} onChange={e => setNewTeamName(e.target.value)}
+                placeholder="Team name..."
+                className="w-full bg-black/30 border border-white/10 rounded-lg px-2.5 py-1.5 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500/50"
+              />
+              <div className="flex gap-1.5">
+                <button onClick={handleCreateTeam} className="flex-1 bg-gradient-to-r from-indigo-500 to-violet-600 text-white text-[10px] font-bold py-1.5 rounded-lg hover:opacity-90 transition-all">Create</button>
+                <button onClick={() => setShowCreateTeam(false)} className="text-slate-500 hover:text-slate-300 text-[10px] px-2 rounded-lg border border-white/8 hover:bg-white/5 transition-all">Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Modals */}
+      <React.Suspense fallback={null}>
+        {showAuth && <AuthModal onClose={() => setShowAuth(false)} onSuccess={() => setShowAuth(false)} />}
+        {showTeam && <TeamDashboard teamId={showTeam} onClose={() => setShowTeam(null)} />}
+      </React.Suspense>
+    </>
+  );
+}

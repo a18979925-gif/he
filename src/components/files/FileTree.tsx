@@ -1,7 +1,7 @@
-import React, { useState } from "react";
-import { 
-  Search, Folder, FolderOpen, ChevronRight, ChevronDown, FileCode, FileJson, 
-  FileText, Settings, ShieldAlert, CheckCircle2, FileCode2, Info
+import React, { useState, useMemo } from "react";
+import {
+  Search, Folder, FolderOpen, ChevronRight, ChevronDown, FileCode, FileJson,
+  FileText, Settings, ShieldAlert, CheckCircle2, FileCode2, Info, Filter, SortAsc, MoreVertical
 } from "lucide-react";
 import { CodeScopeAnalysis } from "../../types";
 
@@ -93,6 +93,10 @@ export const FileTree: React.FC<FileTreeProps> = ({
   appliedSecurityFixes = {},
 }) => {
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+  const [fileTypeFilter, setFileTypeFilter] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<'name' | 'size' | 'type'>('name');
+  const [showFilterMenu, setShowFilterMenu] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: TreeNode } | null>(null);
 
   const toggleFolder = (path: string) => {
     setExpandedFolders(prev => ({
@@ -212,13 +216,83 @@ export const FileTree: React.FC<FileTreeProps> = ({
   };
 
   const rootTree = buildTree(filesList);
-  const filteredTree = fileSearchQuery ? filterTree(rootTree, fileSearchQuery) : rootTree;
+
+  // Filter files by type
+  const filterByType = (node: TreeNode, type: string): TreeNode | null => {
+    if (node.type === 'file') {
+      if (type === 'all') return node;
+      const ext = node.name.split('.').pop()?.toLowerCase();
+      if (type === 'code' && ['java', 'php', 'ts', 'tsx', 'js', 'jsx', 'py', 'rb', 'go', 'rs'].includes(ext || '')) return node;
+      if (type === 'config' && ['json', 'xml', 'yaml', 'yml', 'toml', 'ini'].includes(ext || '')) return node;
+      if (type === 'markup' && ['html', 'css', 'scss', 'md', 'txt'].includes(ext || '')) return node;
+      return null;
+    }
+
+    const filteredChildren: Record<string, TreeNode> = {};
+    let hasMatchingChild = false;
+
+    Object.entries(node.children).forEach(([key, child]) => {
+      const filteredChild = filterByType(child, type);
+      if (filteredChild) {
+        filteredChildren[key] = filteredChild;
+        hasMatchingChild = true;
+      }
+    });
+
+    if (hasMatchingChild) {
+      return { ...node, children: filteredChildren };
+    }
+
+    return null;
+  };
+
+  const typeFilteredTree = fileTypeFilter !== 'all' ? filterByType(rootTree, fileTypeFilter) : rootTree;
+  const filteredTree = fileSearchQuery ? filterTree(typeFilteredTree, fileSearchQuery) : typeFilteredTree;
+
+  // Calculate project statistics
+  const projectStats = useMemo(() => {
+    let fileCount = 0;
+    let totalSize = 0;
+    const typeCounts: Record<string, number> = {};
+
+    const countFiles = (node: TreeNode) => {
+      if (node.type === 'file') {
+        fileCount++;
+        if (node.size) totalSize += node.size;
+        const ext = node.name.split('.').pop()?.toLowerCase() || 'other';
+        typeCounts[ext] = (typeCounts[ext] || 0) + 1;
+      }
+      Object.values(node.children).forEach(countFiles);
+    };
+
+    countFiles(rootTree);
+
+    return {
+      fileCount,
+      totalSize,
+      typeCounts,
+      mostCommonType: Object.entries(typeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'unknown'
+    };
+  }, [rootTree]);
 
   const renderNode = (node: TreeNode, depth: number) => {
     if (node.path === '') {
       return Object.values(node.children)
         .sort((a, b) => {
           if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+
+          // Apply sorting based on sortBy state
+          if (sortBy === 'name') {
+            return a.name.localeCompare(b.name);
+          } else if (sortBy === 'size') {
+            const sizeA = a.size || 0;
+            const sizeB = b.size || 0;
+            return sizeB - sizeA; // Descending order
+          } else if (sortBy === 'type') {
+            const extA = a.name.split('.').pop()?.toLowerCase() || '';
+            const extB = b.name.split('.').pop()?.toLowerCase() || '';
+            return extA.localeCompare(extB);
+          }
           return a.name.localeCompare(b.name);
         })
         .map(child => renderNode(child, depth));
@@ -273,9 +347,13 @@ export const FileTree: React.FC<FileTreeProps> = ({
         <button
           key={node.path}
           onClick={() => setSelectedFile(node.path)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setContextMenu({ x: e.clientX, y: e.clientY, node });
+          }}
           className={`w-full flex items-center justify-between py-1.5 px-2 rounded-md text-xs font-mono transition-all group relative cursor-pointer ${
-            isSelected 
-              ? "bg-indigo-650/20 text-white border-l-2 border-indigo-500 bg-gradient-to-r from-indigo-500/10 to-transparent" 
+            isSelected
+              ? "bg-indigo-650/20 text-white border-l-2 border-indigo-500 bg-gradient-to-r from-indigo-500/10 to-transparent"
               : "hover:bg-slate-800/40 text-slate-400 hover:text-slate-200"
           }`}
           style={{ paddingLeft: `${depth * 12 + 20}px` }}
@@ -342,38 +420,112 @@ export const FileTree: React.FC<FileTreeProps> = ({
         </span>
       </div>
 
-      {/* Project name bar */}
-      <div className="bg-slate-950/80 border border-slate-800 rounded-lg p-2.5 mb-3 flex items-center gap-2">
-        <FolderOpen className="h-4 w-4 text-indigo-400 shrink-0" />
-        <div className="text-left truncate min-w-0">
-          <div className="text-[11px] font-bold text-slate-200 truncate leading-tight">
-            {activeProject.projectName}
+      {/* Project name bar with stats */}
+      <div className="bg-slate-950/80 border border-slate-800 rounded-lg p-2.5 mb-3">
+        <div className="flex items-center gap-2 mb-2">
+          <FolderOpen className="h-4 w-4 text-indigo-400 shrink-0" />
+          <div className="text-left truncate min-w-0 flex-1">
+            <div className="text-[11px] font-bold text-slate-200 truncate leading-tight">
+              {activeProject.projectName}
+            </div>
+            <div className="text-[9px] text-slate-500 truncate leading-none mt-0.5">
+              {projectSource === 'sample' ? 'demo-repository' : 'extracted-files'}
+            </div>
           </div>
-          <div className="text-[9px] text-slate-500 truncate leading-none mt-0.5">
-            {projectSource === 'sample' ? 'demo-repository' : 'extracted-files'}
-          </div>
+        </div>
+        {/* Project stats */}
+        <div className="flex items-center gap-3 text-[9px] text-slate-500 border-t border-slate-800/50 pt-2">
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+            {projectStats.fileCount} files
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+            {projectStats.totalSize > 1024 ? `${(projectStats.totalSize / 1024).toFixed(1)}KB` : `${projectStats.totalSize}B`}
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+            {projectStats.mostCommonType.toUpperCase()}
+          </span>
         </div>
       </div>
 
-      {/* Search Input */}
-      <div className="relative mb-3 shrink-0">
-        <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-500" />
-        <input 
-          type="text" 
-          placeholder="Filter workspace files..."
-          value={fileSearchQuery}
-          onChange={(e) => setFileSearchQuery(e.target.value)}
-          className="w-full bg-slate-950 border border-slate-850 rounded-lg py-2 pl-8.5 pr-8 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all font-sans"
-        />
-        {fileSearchQuery && (
+      {/* Search and Filter Row */}
+      <div className="mb-3 shrink-0 space-y-2">
+        <div className="relative">
+          <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-500" />
+          <input
+            type="text"
+            placeholder="Filter workspace files..."
+            value={fileSearchQuery}
+            onChange={(e) => setFileSearchQuery(e.target.value)}
+            className="w-full bg-slate-950 border border-slate-850 rounded-lg py-2 pl-8.5 pr-8 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all font-sans"
+          />
+          {fileSearchQuery && (
+            <button
+              onClick={() => setFileSearchQuery("")}
+              className="absolute right-2 top-2 text-slate-400 hover:text-white text-xs bg-slate-800 hover:bg-slate-700 w-5 h-5 rounded-full flex items-center justify-center font-bold cursor-pointer"
+              title="Clear filter"
+            >
+              ×
+            </button>
+          )}
+        </div>
+
+        {/* Filter and Sort Controls */}
+        <div className="flex gap-2">
+          {/* File Type Filter */}
+          <div className="relative flex-1">
+            <button
+              onClick={() => setShowFilterMenu(!showFilterMenu)}
+              className="w-full flex items-center justify-between px-3 py-2 bg-slate-950 border border-slate-850 rounded-lg text-xs text-slate-300 hover:border-indigo-500/50 transition-all"
+            >
+              <div className="flex items-center gap-2">
+                <Filter className="h-3.5 w-3.5 text-indigo-400" />
+                <span className="truncate">{fileTypeFilter === 'all' ? 'All Files' : fileTypeFilter === 'code' ? 'Code' : fileTypeFilter === 'config' ? 'Config' : 'Markup'}</span>
+              </div>
+              <ChevronDown className={`h-3.5 w-3.5 text-slate-500 transition-transform shrink-0 ${showFilterMenu ? 'rotate-180' : ''}`} />
+            </button>
+
+            {showFilterMenu && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-slate-900 border border-slate-800 rounded-lg shadow-xl z-10 overflow-hidden">
+                {[
+                  { value: 'all', label: 'All Files' },
+                  { value: 'code', label: 'Code Files' },
+                  { value: 'config', label: 'Config Files' },
+                  { value: 'markup', label: 'Markup Files' },
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    onClick={() => {
+                      setFileTypeFilter(option.value);
+                      setShowFilterMenu(false);
+                    }}
+                    className={`w-full px-3 py-2 text-xs text-left hover:bg-slate-800 transition-colors ${
+                      fileTypeFilter === option.value ? 'bg-indigo-500/10 text-indigo-400 font-medium' : 'text-slate-300'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Sort Button */}
           <button
-            onClick={() => setFileSearchQuery("")}
-            className="absolute right-2 top-2 text-slate-400 hover:text-white text-xs bg-slate-800 hover:bg-slate-700 w-5 h-5 rounded-full flex items-center justify-center font-bold cursor-pointer"
-            title="Clear filter"
+            onClick={() => {
+              const sortOptions: Array<'name' | 'size' | 'type'> = ['name', 'size', 'type'];
+              const currentIndex = sortOptions .indexOf(sortBy);
+              const nextIndex = (currentIndex + 1) % sortOptions.length;
+              setSortBy(sortOptions[nextIndex]);
+            }}
+            className="flex items-center justify-center px-3 py-2 bg-slate-950 border border-slate-850 rounded-lg text-xs text-slate-300 hover:border-indigo-500/50 transition-all shrink-0"
+            title="Sort by: Name, Size, Type"
           >
-            ×
+            <SortAsc className="h-3.5 w-3.5 text-indigo-400" />
           </button>
-        )}
+        </div>
       </div>
 
       {/* Files Tree Area */}

@@ -24,6 +24,18 @@ export const SqlTerminalTab: React.FC<SqlTerminalTabProps> = ({
   activeProject,
 }) => {
   const [tableSearch, setTableSearch] = useState("");
+  const [history, setHistory] = useState<string[]>([]);
+
+  const handleExecuteWithHistory = (queryToRun?: string) => {
+    const q = queryToRun || sqlQuery;
+    if (q.trim()) {
+      setHistory(prev => {
+        const next = [q, ...prev.filter(item => item !== q)];
+        return next.slice(0, 5); // Keep last 5 queries
+      });
+    }
+    handleExecuteSQLQuery(queryToRun);
+  };
 
   const lineCount = sqlQuery.split("\n").length;
   const lineNumbers = Array.from({ length: Math.max(lineCount, 5) }, (_, i) => i + 1);
@@ -35,6 +47,20 @@ export const SqlTerminalTab: React.FC<SqlTerminalTabProps> = ({
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 text-left animate-fade-in" id="sql-terminal-tab-view">
+      {/* Premium UI Polish Status Header */}
+      <div className="flex justify-between items-center bg-slate-900/35 border border-slate-800/80 px-4 py-2.5 rounded-xl mb-4 hover:scale-[1.002] transition-transform duration-300">
+        <div className="flex items-center gap-2">
+          <svg className="h-3.5 w-3.5 text-indigo-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+          </svg>
+          <span className="text-[9px] uppercase font-bold tracking-widest text-slate-400 font-sans">Module: AST-Inferred Source Intelligence</span>
+        </div>
+        <div className="flex items-center gap-1.5 text-[9px] bg-slate-950 text-slate-400 font-bold px-2 py-0.5 rounded-full border border-slate-850 select-none">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          AI Oracle Connected
+        </div>
+      </div>
+
       <style dangerouslySetInnerHTML={{ __html: `
         @keyframes shimmer {
           100% {
@@ -92,7 +118,7 @@ export const SqlTerminalTab: React.FC<SqlTerminalTabProps> = ({
 
               <button
                 type="button"
-                onClick={() => handleExecuteSQLQuery()}
+                onClick={() => handleExecuteWithHistory()}
                 disabled={sqlLoading}
                 className="relative group overflow-hidden bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 shadow-[0_0_15px_rgba(6,182,212,0.15)] hover:shadow-[0_0_20px_rgba(6,182,212,0.35)] disabled:opacity-50 cursor-pointer font-sans"
               >
@@ -120,6 +146,12 @@ export const SqlTerminalTab: React.FC<SqlTerminalTabProps> = ({
             <textarea
               value={sqlQuery}
               onChange={(e) => setSqlQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault();
+                  handleExecuteWithHistory();
+                }
+              }}
               placeholder="Napisz zapytanie SQL np. SELECT * FROM users;"
               rows={5}
               wrap="off"
@@ -205,12 +237,12 @@ export const SqlTerminalTab: React.FC<SqlTerminalTabProps> = ({
             )}
 
             {!sqlLoading && !sqlError && sqlResults && sqlResults.length > 0 && (
-              <div className="overflow-x-auto border border-slate-800 rounded-xl bg-slate-950/30 sql-textarea">
+              <div className="overflow-x-auto overflow-y-auto max-h-[500px] border border-slate-800 rounded-xl bg-slate-950/30 sql-textarea relative shadow-inner">
                 <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-slate-900/80 border-b border-slate-850">
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-slate-900/95 backdrop-blur-md border-b border-slate-800 shadow-sm">
                       {Object.keys(sqlResults[0]).map((key, i) => (
-                        <th key={i} className="px-4 py-3 font-bold text-slate-350 font-mono tracking-wide">{key}</th>
+                        <th key={i} className="px-4 py-3 font-bold text-slate-300 font-mono tracking-wider uppercase text-[10px]">{key}</th>
                       ))}
                     </tr>
                   </thead>
@@ -286,7 +318,7 @@ export const SqlTerminalTab: React.FC<SqlTerminalTabProps> = ({
                 className="p-3.5 bg-slate-950/40 hover:bg-indigo-950/30 rounded-xl border border-slate-850 hover:border-indigo-800/50 cursor-pointer transition-all duration-300 space-y-2 group shadow-sm hover:shadow-[0_0_15px_rgba(99,102,241,0.05)] relative overflow-hidden"
                 onClick={() => {
                   setSqlQuery(`SELECT * FROM ${table.name};`);
-                  handleExecuteSQLQuery(`SELECT * FROM ${table.name};`);
+                  handleExecuteWithHistory(`SELECT * FROM ${table.name};`);
                 }}
               >
                 {/* Background gradient trace on hover */}
@@ -334,13 +366,36 @@ export const SqlTerminalTab: React.FC<SqlTerminalTabProps> = ({
           </div>
         </div>
 
+        {/* Query History Section */}
+        {history.length > 0 && (
+          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 text-xs space-y-3 leading-relaxed shadow-2xl backdrop-blur-md">
+            <div className="flex items-center gap-1.5 text-slate-200 font-bold uppercase tracking-wider text-[11px] font-sans">
+              <Terminal className="h-3.5 w-3.5 text-cyan-400" />
+              <span>Ostatnie zapytania</span>
+            </div>
+            <div className="space-y-1.5 mt-2">
+              {history.map((query, index) => (
+                <button
+                  key={index}
+                  type="button"
+                  onClick={() => setSqlQuery(query)}
+                  className="w-full text-left p-2 bg-slate-950/50 hover:bg-cyan-500/5 hover:border-cyan-500/20 rounded-lg border border-slate-850 transition-all font-mono text-[10px] text-slate-350 hover:text-cyan-400 flex items-center justify-between group cursor-pointer"
+                >
+                  <span className="truncate max-w-[170px]">{query}</span>
+                  <span className="text-[8px] text-slate-600 group-hover:text-cyan-400/80 transition-colors uppercase tracking-wider font-bold">Wstaw</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Database Sandbox operations info */}
         <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 text-xs space-y-3 leading-relaxed shadow-2xl backdrop-blur-md">
-          <div className="flex items-center gap-1.5 text-slate-200 font-bold uppercase tracking-wider text-[11px]">
+          <div className="flex items-center gap-1.5 text-slate-200 font-bold uppercase tracking-wider text-[11px] font-sans">
             <Sparkles className="h-3.5 w-3.5 text-amber-550" />
             <span>Rekomendowane zapytania</span>
           </div>
-          <p className="text-[11px] text-slate-400 leading-normal">
+          <p className="text-[11px] text-slate-400 leading-normal font-sans">
             Szybkie szablony zapytań SQL do wypróbowania w piaskownicy (kliknij, aby wstawić):
           </p>
           <div className="space-y-2 mt-2">

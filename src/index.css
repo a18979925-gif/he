@@ -160,3 +160,26 @@ tr:hover {
 circle.stroke-slate-800 {
   stroke: #222228 !important;
 }
+
+/* Custom UI class utility fallbacks to fix rendering typos */
+.border-slate-850,
+.border-slate-855 {
+  border-color: #222228 !important;
+}
+
+.text-slate-550 {
+  color: #8c93a0 !important;
+}
+
+.placeholder-slate-550::placeholder,
+.placeholder-slate-550 {
+  color: #8c93a0 !important;
+}
+
+.bg-indigo-955 {
+  background-color: #111026 !important;
+}
+
+.bg-slate-955 {
+  background-color: #0d0d0f !important;
+}

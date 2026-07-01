@@ -35,6 +35,7 @@ interface DiagnosticsTabProps {
   onFixIssue: (filePath: string, oldCode: string, newCode: string) => Promise<void>;
   setActiveTab: (tab: string) => void;
   setSelectedFile: (file: string) => void;
+  setActiveFixIssue?: (issue: any) => void;
 }
 
 export const DiagnosticsTab: React.FC<DiagnosticsTabProps> = ({
@@ -42,6 +43,7 @@ export const DiagnosticsTab: React.FC<DiagnosticsTabProps> = ({
   onFixIssue,
   setActiveTab,
   setSelectedFile,
+  setActiveFixIssue,
 }) => {
   const [filterType, setFilterType] = useState<string>("All");
   const [filterSeverity, setFilterSeverity] = useState<string>("All");
@@ -125,16 +127,13 @@ export const DiagnosticsTab: React.FC<DiagnosticsTabProps> = ({
     return typeMatch && severityMatch;
   });
 
-  const handleFix = async (issue: UnifiedIssue) => {
+  const handleFix = (issue: UnifiedIssue) => {
     if (!issue.oldCode || !issue.newCode) return;
-    try {
-      setFixingId(issue.id);
-      await onFixIssue(issue.file, issue.oldCode, issue.newCode);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setFixingId(null);
+    setSelectedFile(issue.file);
+    if (setActiveFixIssue) {
+      setActiveFixIssue(issue);
     }
+    setActiveTab("files");
   };
 
   const inspectInExplorer = (filePath: string) => {

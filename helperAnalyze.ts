@@ -826,6 +826,48 @@ export function sweepSecurity(files: Array<{ name: string; content?: string }>) 
           newCode: "crypto.createCipheriv('aes-256-gcm', key, iv);"
         });
       }
+
+      // 19. Webhook URLs / Cloud Service Keys / Bearer Tokens
+      if (line.includes("hooks.slack.com/services/") || line.includes("discord.com/api/webhooks")) {
+        securityIssues.push({
+          category: "Exposed Chat Webhook URL",
+          file: f.name,
+          line: idx + 1,
+          severity: "High",
+          description: "A hardcoded Slack or Discord chat integration webhook URL was found. Attackers can spam notifications or extract server metadata.",
+          solution: "Move this webhook URL to environment variables or encrypted secrets store.",
+          oldCode: line.trim(),
+          newCode: "const webhookUrl = process.env.CHAT_WEBHOOK_URL;"
+        });
+      }
+
+      const awsKeyRegex = /(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/;
+      if (awsKeyRegex.test(line)) {
+        securityIssues.push({
+          category: "Hardcoded AWS Access Key ID",
+          file: f.name,
+          line: idx + 1,
+          severity: "Critical",
+          description: "An AWS IAM User Access Key ID was detected in the file. This can lead to account compromise if AWS secret keys are leaked or derived.",
+          solution: "Remove this key from source files and use IAM roles or vault storage.",
+          oldCode: line.trim(),
+          newCode: "const awsKey = process.env.AWS_ACCESS_KEY_ID;"
+        });
+      }
+
+      const bearerRegex = /Bearer\s+([a-zA-Z0-9_\-\.\~+\/]{20,})=*/g;
+      if (bearerRegex.test(line) && !line.includes("process.env") && !line.includes("config") && !line.includes("EXAMPLE") && !line.includes("mock")) {
+        securityIssues.push({
+          category: "Hardcoded Bearer Token",
+          file: f.name,
+          line: idx + 1,
+          severity: "Critical",
+          description: "A hardcoded authentication Bearer token was found inside source code.",
+          solution: "Retrieve authentication Bearer tokens dynamically from authorization headers or environment configurations.",
+          oldCode: line.trim(),
+          newCode: "const token = process.env.API_BEARER_TOKEN;"
+        });
+      }
     });
   });
 
@@ -873,16 +915,18 @@ export function sweepPerformance(files: Array<{ name: string; content?: string }
       }
     });
 
-    // 2. N+1 Loop database requests
     let insideLoop = false;
     let loopLineNum = 0;
     lines.forEach((line, idx) => {
-      if (line.includes("for ") || line.includes(".forEach") || line.includes("while ") || line.includes(".map(")) {
+      const cleanLine = line.split("//")[0].split("/*")[0];
+      if (cleanLine.includes("for ") || cleanLine.includes(".forEach") || cleanLine.includes("while ") || cleanLine.includes(".map(")) {
         insideLoop = true;
         loopLineNum = idx + 1;
       }
       if (insideLoop && (idx + 1 - loopLineNum < 15)) {
-        if (line.includes(".query") || line.includes("findUnique") || line.includes("findMany") || line.includes("execute") || line.includes("db.")) {
+        if ((cleanLine.includes(".query") || cleanLine.includes("findUnique") || cleanLine.includes("findMany") || cleanLine.includes("execute") || cleanLine.includes("db.")) &&
+            !cleanLine.includes("querySelector") &&
+            !cleanLine.includes("document.")) {
           performanceIssues.push({
             issue: "N+1 Database Query Pattern",
             file: f.name,
@@ -894,6 +938,17 @@ export function sweepPerformance(files: Array<{ name: string; content?: string }
             newCode: "// Query should be moved outside of loop or batched"
           });
           insideLoop = false;
+        } else if (cleanLine.includes("await ") && !cleanLine.includes("Promise.all")) {
+          performanceIssues.push({
+            issue: "Sequential Await inside Iteration Loop",
+            file: f.name,
+            line: idx + 1,
+            severity: "Medium",
+            description: "Using await sequentially inside a loop blocks the thread until each promise completes. This turns what could be parallel operations into synchronous-like sequential ones.",
+            suggestedOptimization: "Collect promises in an array and resolve them concurrently using Promise.all().",
+            oldCode: line.trim(),
+            newCode: "// const promises = list.map(item => asyncOp(item));\n// await Promise.all(promises);"
+          });
         }
       }
     });

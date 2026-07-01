@@ -9,7 +9,8 @@ import { CodeScopeAnalysis } from "./src/types.js";
 export async function processAnalysis(
   files: Array<{ name: string; size: number; content?: string }>,
   projectName: string,
-  ai: GoogleGenAI | null
+  ai: GoogleGenAI | null,
+  selectedFilesToAudit?: string[]
 ): Promise<CodeScopeAnalysis> {
   const projName = projectName || "Uploaded Project";
 
@@ -21,25 +22,33 @@ export async function processAnalysis(
     try {
       console.log(`[AI Oracle] Initiating ultra high-fidelity code parsing for: ${projName}...`);
       
-      // Filter critical configuration/backend files to send to the LLM context (up to 15 files)
-      const configFiles = files.filter(f => {
-        const ln = f.name.toLowerCase();
-        return ln.includes("package.json") || 
-               ln.includes("composer.json") || 
-               ln.includes("pom.xml") || 
-               ln.includes("requirements.txt") || 
-               ln.includes("go.mod") || 
-               ln.includes("gemfile") || 
-               ln.includes("schema") || 
-               ln.includes("route") ||
-               ln.includes("app") || 
-               ln.includes("server") ||
-               ln.includes("controller") ||
-               ln.includes("model") ||
-               ln.includes("service") ||
-               ln.includes("repository") ||
-               ln.includes(".env");
-      }).slice(0, 15);
+      // Select files for AI scan
+      let selectedFiles = [...files]
+        .filter(f => f.content && f.content.trim().length > 0);
+
+      if (selectedFilesToAudit && selectedFilesToAudit.length > 0) {
+        selectedFiles = selectedFiles.filter(f => selectedFilesToAudit.includes(f.name));
+      } else {
+        const getPriority = (name: string): number => {
+          const ln = name.toLowerCase();
+          if (ln.includes("package.json") || ln.includes("composer.json") || ln.includes("pom.xml") || ln.includes("requirements.txt") || ln.includes("go.mod") || ln.includes("gemfile") || ln.includes(".env")) return 1;
+          if (ln.includes("schema") || ln.includes("route") || ln.includes("server") || ln.includes("app.ts") || ln.includes("app.js")) return 2;
+          if (ln.includes("controller") || ln.includes("model") || ln.includes("service") || ln.includes("repository")) return 3;
+          return 4;
+        };
+        selectedFiles = selectedFiles
+          .sort((a, b) => getPriority(a.name) - getPriority(b.name))
+          .slice(0, 6); // Default to 6 files to speed up scanning
+      }
+
+      const MAX_FILE_CHARS = 6000;
+      const configFiles = selectedFiles.map(f => {
+        let content = f.content || "";
+        if (content.length > MAX_FILE_CHARS) {
+          content = content.substring(0, MAX_FILE_CHARS) + `\n\n// [... Content truncated by CodeScope AI for length constraints - showing first ${MAX_FILE_CHARS} characters ...]`;
+        }
+        return { name: f.name, content };
+      });
 
       const filesMetadata = files.map(f => ({ name: f.name, size: f.size }));
 
@@ -71,13 +80,13 @@ YOUR TASK:
 Conduct an extremely deep, thorough, and precise static analysis matching SonarQube quality standards. Refine, enhance, and validate the baseline data.
 You MUST follow these strict principles:
 1. **Realism**: Only report details actually present in the source code or file layout. Do not invent fictional endpoints, folder names, database tables, or modules.
-2. **Deep Security Sweep (OWASP Top 10)**: Review all file contents for hardcoded credentials, SQL injection patterns, command injections, unpurified HTML strings, permissive CORS headers, weak cryptos (e.g. DES, RC4), missing CSRF protections, BOLA/IDOR on parameterized endpoints, production debug mode configurations, or insecure deserialization. Give full lines and detailed fix guides.
-3. **Performance Profiling**: Search for synchronous blocking filesystem operations, loops that issue queries repeatedly (N+1 query patterns), memory leaks, event listeners without removal, or quadratic nested loops (O(N^2)).
-4. **Advanced Bugs Detection**: Look for resource/handle leaks (unclosed files or DB connections), unsafe floating-point comparisons, generic exception catching that obscures original errors, and potential null pointer dereferences.
-5. **Code Smells & Maintainability**: Sweep for callback hell / deeply nested closures (>3 levels), magic numbers, commented-out source code blocks, and naming convention mismatches (e.g. local variables in snake_case).
+2. **Deep Security Sweep (OWASP Top 10)**: Review all file contents for hardcoded credentials, SQL injection patterns, command injections, unpurified HTML strings, permissive CORS headers, weak cryptos (e.g. DES, RC4), missing CSRF protections, BOLA/IDOR on parameterized endpoints, production debug mode configurations, or insecure deserialization. Give full lines and detailed fix guides. LIMIT output to the top 3 most critical findings.
+3. **Performance Profiling**: Search for synchronous blocking filesystem operations, loops that issue queries repeatedly (N+1 query patterns), memory leaks, event listeners without removal, or quadratic nested loops (O(N^2)). LIMIT output to the top 3 findings.
+4. **Advanced Bugs Detection**: Look for resource/handle leaks (unclosed files or DB connections), unsafe floating-point comparisons, generic exception catching that obscures original errors, and potential null pointer dereferences. LIMIT output to the top 3 findings.
+5. **Code Smells & Maintainability**: Sweep for callback hell / deeply nested closures (>3 levels), magic numbers, commented-out source code blocks, and naming convention mismatches (e.g. local variables in snake_case). LIMIT output to the top 3 findings.
 6. **Architectural Style Proof**: Verify if the layout represents a Clean Architecture, MVC, Layered Monolith, Microservices, or Domain-Driven Design (DDD). Provide concrete evidence.
-7. **Interactive Endpoints & ERD**: Build a complete, highly structured blueprint of detected REST routing paths and SQL/Prisma schemas.
-
+7. **Interactive Endpoints & ERD**: Build a complete, highly structured blueprint of detected REST routing paths (max 8) and SQL/Prisma schemas (max 8).
+8. **Keep descriptions and suggestions very short**: Write extremely concise, direct bullet points to minimize output JSON token size.
 
 Respond with 100% valid, minified, strict JSON matching the exact schema layout below:
 {
@@ -143,7 +152,7 @@ Respond with 100% valid, minified, strict JSON matching the exact schema layout 
 `;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.5-flash",
         contents: prompt,
         config: {
           responseMimeType: "application/json",

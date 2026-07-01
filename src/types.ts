@@ -192,3 +192,80 @@ export interface CrashLogItem {
   stackTrace: string[];
   resolved: boolean;
 }
+
+export interface AuditIssue {
+  id: string;
+  filePath: string;
+  line: number;
+  category: 'security' | 'quality' | 'refactor';
+  severity: 'critical' | 'warning' | 'info';
+  title: string;
+  description: string;
+  snippet: string;
+  suggestion?: string;
+  diff?: string;
+}
+
+export interface FileNode {
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  children?: FileNode[];
+  language?: string;
+}
+
+export interface AnalysisSummary {
+  id: string;
+  fileName: string;
+  status: 'pending' | 'extracting' | 'scanning_heuristics' | 'scanning_ai' | 'completed' | 'failed';
+  progress: number;
+  fileCount: number;
+  scannedFileCount: number;
+  languages: string[];
+  issuesCount: {
+    security: number;
+    quality: number;
+    refactor: number;
+  };
+  criticalCount: number;
+  createdAt: string;
+  plan?: 'basic' | 'super';
+}
+
+export interface FileMetrics {
+  linesCount: number;
+  emptyLinesCount: number;
+  commentLinesCount: number;
+  cyclomaticComplexity: number;
+  nestingDepthMax: number;
+  functionsCount: number;
+  densityScore: 'Excellent' | 'Moderate' | 'Heavy';
+}
+
+export interface AnalysisReport {
+  summary: AnalysisSummary;
+  issues: AuditIssue[];
+  files: {
+    path: string;
+    language: string;
+    size: number;
+    content: string;
+    metrics?: FileMetrics;
+  }[];
+  tree: FileNode[];
+}
+
+export type StreamEvent =
+  | { type: 'STAGE_CHANGED'; status: AnalysisSummary['status']; progress: number; message: string }
+  | { type: 'FILE_SCANNED'; filePath: string; progress: number }
+  | { type: 'ISSUE_FOUND'; issue: AuditIssue }
+  | { type: 'STAGE_COMPLETED'; status: AnalysisSummary['status']; summary: AnalysisSummary }
+  | { type: 'ANALYSIS_DONE'; report: AnalysisReport }
+  | { type: 'ERROR'; message: string };
+
+export interface ChatMessage {
+  id: string;
+  sender: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+}

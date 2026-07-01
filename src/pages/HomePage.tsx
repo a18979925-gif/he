@@ -25,6 +25,13 @@ import { GitInsightsTab } from "../components/GitInsightsTab";
 import { BenchmarkTab } from "../components/BenchmarkTab";
 import { DeadCodeTab } from "../components/DeadCodeTab";
 import { TimelineTab } from "../components/TimelineTab";
+import TotalAnalyzeTab from "../components/TotalAnalyzeTab";
+import CtoSuiteTab from "../components/CtoSuiteTab";
+import { CoverageTab } from "../components/CoverageTab";
+import { DuplicationTab } from "../components/DuplicationTab";
+import { SecretsTab } from "../components/SecretsTab";
+import { LicenseTab } from "../components/LicenseTab";
+import { DepVulnTab } from "../components/DepVulnTab";
 
 import { CodeScopeAnalysis, EndpointItem, DBTable, SecurityIssue, RefactoringSuggestion } from "../types";
 
@@ -128,7 +135,10 @@ interface HomePageProps {
   // Copy Feedback
   copyFeedback: string | null;
   copyTextToClipboard: (text: string, label: string) => void;
+  activeFixIssue?: any;
+  setActiveFixIssue?: (issue: any) => void;
   onFixIssue: (filePath: string, oldCode: string, newCode: string) => Promise<void>;
+  onSaveFile?: (filePath: string, content: string) => Promise<void>;
 }
 
 export const HomePage: React.FC<HomePageProps> = (props) => {
@@ -141,6 +151,14 @@ export const HomePage: React.FC<HomePageProps> = (props) => {
             projectSource={props.projectSource}
             setActiveTab={props.setActiveTab}
           />
+        );
+      case "cto-suite":
+        return (
+          <CtoSuiteTab activeProject={props.activeProject} />
+        );
+      case "total-analyze":
+        return (
+          <TotalAnalyzeTab />
         );
       case "architecture":
         return (
@@ -242,6 +260,10 @@ export const HomePage: React.FC<HomePageProps> = (props) => {
             uploadedZipFiles={props.uploadedZipFiles}
             selectedFile={props.selectedFile}
             setSelectedFile={props.setSelectedFile}
+            activeFixIssue={props.activeFixIssue}
+            setActiveFixIssue={props.setActiveFixIssue}
+            onFixIssue={props.onFixIssue}
+            onSaveFile={props.onSaveFile}
             fileSearchQuery={props.fileSearchQuery}
             setFileSearchQuery={props.setFileSearchQuery}
             codeSearchQuery={props.codeSearchQuery}
@@ -262,6 +284,7 @@ export const HomePage: React.FC<HomePageProps> = (props) => {
             onFixIssue={props.onFixIssue}
             setActiveTab={props.setActiveTab}
             setSelectedFile={props.setSelectedFile}
+            setActiveFixIssue={props.setActiveFixIssue}
           />
         );
       case "analysis":
@@ -300,6 +323,16 @@ export const HomePage: React.FC<HomePageProps> = (props) => {
         return <DeadCodeTab activeProject={props.activeProject} />;
       case "timeline":
         return <TimelineTab activeProject={props.activeProject} />;
+      case "coverage":
+        return <CoverageTab />;
+      case "duplication":
+        return <DuplicationTab />;
+      case "secrets":
+        return <SecretsTab />;
+      case "license":
+        return <LicenseTab />;
+      case "dep-vuln":
+        return <DepVulnTab />;
       default:
         return (
           <DashboardTab

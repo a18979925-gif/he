@@ -1,17 +1,83 @@
 import express from "express";
 import path from "path";
+import http from "http";
+import { Server as SocketIOServer } from "socket.io";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
-import { processAnalysis } from "./mainalalize.js";
+import { processAnalysis } from "./mainAnalyze.js";
 import { sandboxProjects, initializeMockData, executeSQL, matchRoute } from "./runtime.js";
+import { authRouter } from "./authRoutes.js";
+import { chatDb, teamDb, billingDb } from "./db.js";
 
 dotenv.config();
 
 const app = express();
+const httpServer = http.createServer(app);
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3022;
 
 app.use(express.json({ limit: "50mb" }));
+
+// ─── Auth + Team routes ───────────────────────────────────────────────────
+app.use("/api/auth", authRouter);
+
+// ─── Socket.io setup (realtime chat + presence) ───────────────────────────
+const io = new SocketIOServer(httpServer, {
+  cors: { origin: "*", methods: ["GET", "POST"] },
+  path: "/socket.io"
+});
+
+// Track online presence per team
+const teamPresence: Record<string, Set<string>> = {}; // teamId → Set of usernames
+
+io.on("connection", (socket) => {
+  let currentUser: { id: string; username: string } | null = null;
+  let currentTeamId: string | null = null;
+
+  socket.on("team:join", ({ teamId, user }) => {
+    currentUser = user;
+    currentTeamId = teamId;
+    socket.join(teamId);
+
+    if (!teamPresence[teamId]) teamPresence[teamId] = new Set();
+    teamPresence[teamId].add(user.username);
+
+    // Broadcast updated presence list
+    io.to(teamId).emit("presence:update", Array.from(teamPresence[teamId]));
+
+    // Send chat history to new joiner
+    const history = chatDb.getRecent(teamId, 50);
+    socket.emit("chat:history", history);
+  });
+
+  socket.on("chat:send", ({ teamId, user, message, context }) => {
+    if (!teamId || !user || !message) return;
+
+    // Persist to SQLite
+    chatDb.save(teamId, user.id, user.username, message, context);
+
+    const msg = {
+      id: Date.now().toString(),
+      teamId, userId: user.id, username: user.username,
+      message, context: context || null,
+      timestamp: new Date().toISOString()
+    };
+
+    // Broadcast to all room members
+    io.to(teamId).emit("chat:message", msg);
+  });
+
+  socket.on("presence:viewing", ({ teamId, user, file, line }) => {
+    socket.to(teamId).emit("presence:viewing", { user, file, line });
+  });
+
+  socket.on("disconnect", () => {
+    if (currentTeamId && currentUser) {
+      teamPresence[currentTeamId]?.delete(currentUser.username);
+      io.to(currentTeamId).emit("presence:update", Array.from(teamPresence[currentTeamId] || []));
+    }
+  });
+});
 
 // Initialize Gemini client if API key is provided
 let ai: GoogleGenAI | null = null;
@@ -66,6 +132,69 @@ app.post("/api/analyze", async (req, res) => {
   }
 });
 
+// Safe workspace file path resolver helper
+async function resolveWorkspaceFile(filePath: string): Promise<string | null> {
+  const fs = await import("fs/promises");
+  let absolutePath = path.resolve(process.cwd(), filePath);
+  
+  // 1. Direct match check
+  try {
+    await fs.access(absolutePath);
+    return absolutePath;
+  } catch {}
+
+  // 2. Strip top level folder prefix check (e.g. "my-project-master/src/App.tsx" -> "src/App.tsx")
+  const parts = filePath.split(/[/\\]/);
+  if (parts.length > 1) {
+    const stripped = parts.slice(1).join("/");
+    const altPath = path.resolve(process.cwd(), stripped);
+    try {
+      await fs.access(altPath);
+      return altPath;
+    } catch {}
+  }
+
+  // 3. Search suffix recursively in workspace
+  const findFileWithSuffix = async (dir: string, suffix: string): Promise<string | null> => {
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const resPath = path.resolve(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (['node_modules', 'dist', 'build', '.git'].includes(entry.name)) continue;
+          const match = await findFileWithSuffix(resPath, suffix);
+          if (match) return match;
+        } else {
+          const normalizedRes = resPath.replace(/\\/g, '/').toLowerCase();
+          const normalizedSuffix = suffix.replace(/\\/g, '/').toLowerCase();
+          if (normalizedRes.endsWith(normalizedSuffix)) {
+            return resPath;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`[Resolve] Directory read failed for: ${dir}`);
+    }
+    return null;
+  };
+
+  // Try suffix of length 2 (e.g. "src/App.tsx")
+  if (parts.length >= 2) {
+    const suffix = parts.slice(-2).join("/");
+    const matched = await findFileWithSuffix(process.cwd(), suffix);
+    if (matched) return matched;
+  }
+
+  // Try suffix of length 1 (e.g. "App.tsx")
+  if (parts.length >= 1) {
+    const suffix = parts.slice(-1)[0];
+    const matched = await findFileWithSuffix(process.cwd(), suffix);
+    if (matched) return matched;
+  }
+
+  return null;
+}
+
 // Auto-fix endpoint to modify code directly on disk
 app.post("/api/fix-code", async (req, res) => {
   const { filePath, oldCode, newCode } = req.body;
@@ -74,26 +203,33 @@ app.post("/api/fix-code", async (req, res) => {
   }
 
   try {
-    // Resolve absolute path safely relative to process.cwd() (user's workspace root)
-    const absolutePath = path.resolve(process.cwd(), filePath);
+    const absolutePath = await resolveWorkspaceFile(filePath);
+    if (!absolutePath) {
+      return res.status(404).json({ error: `File not found on local disk at: ${filePath}` });
+    }
     
     // Prevent directory traversal: check if it starts with process.cwd()
     if (!absolutePath.toLowerCase().startsWith(process.cwd().toLowerCase())) {
       return res.status(403).json({ error: "Forbidden: Cannot edit files outside of the workspace directory." });
     }
 
-    const fs = await import("fs/promises");
-    
-    // Check if the file exists
-    try {
-      await fs.access(absolutePath);
-    } catch {
-      return res.status(404).json({ error: `File not found on local disk at: ${filePath}` });
+    const baseName = path.basename(absolutePath).toLowerCase();
+    const extName = path.extname(absolutePath).toLowerCase();
+
+    const ALLOWED_EXTENSIONS = [
+      ".ts", ".tsx", ".js", ".jsx", ".java", ".py", ".go", ".rs", ".php",
+      ".sql", ".json", ".xml", ".txt", ".md", ".html", ".css",
+      ".yml", ".yaml", ".gitignore", ".env", ".local", ".example",
+      ".prettierrc", ".eslintrc", ".babelrc", ".toml", ".config", ""
+    ];
+
+    if (!ALLOWED_EXTENSIONS.includes(extName)) {
+      return res.status(403).json({ error: "Forbidden: File extension is not allowed for modification." });
     }
 
+    const fs = await import("fs/promises");
     const fileContent = await fs.readFile(absolutePath, "utf-8");
     
-    // Perform replacement (replace the old code with the new code)
     if (!fileContent.includes(oldCode)) {
       return res.status(400).json({ 
         error: "Target code block not found in file. The file may have been already modified." 
@@ -108,6 +244,49 @@ app.post("/api/fix-code", async (req, res) => {
   } catch (err: any) {
     console.error("Auto-fix execution failed:", err);
     return res.status(500).json({ error: `Failed to fix file on disk: ${err.message}` });
+  }
+});
+
+// Save file endpoint to overwrite file content directly on disk
+app.post("/api/save-file", async (req, res) => {
+  const { filePath, content } = req.body;
+  if (!filePath || content === undefined) {
+    return res.status(400).json({ error: "Missing filePath or content parameters." });
+  }
+
+  try {
+    const absolutePath = await resolveWorkspaceFile(filePath);
+    if (!absolutePath) {
+      return res.status(404).json({ error: `File not found on local disk at: ${filePath}` });
+    }
+    
+    // Prevent directory traversal: check if it starts with process.cwd()
+    if (!absolutePath.toLowerCase().startsWith(process.cwd().toLowerCase())) {
+      return res.status(403).json({ error: "Forbidden: Cannot edit files outside of the workspace directory." });
+    }
+
+    const baseName = path.basename(absolutePath).toLowerCase();
+    const extName = path.extname(absolutePath).toLowerCase();
+
+    const ALLOWED_EXTENSIONS = [
+      ".ts", ".tsx", ".js", ".jsx", ".java", ".py", ".go", ".rs", ".php",
+      ".sql", ".json", ".xml", ".txt", ".md", ".html", ".css",
+      ".yml", ".yaml", ".gitignore", ".env", ".local", ".example",
+      ".prettierrc", ".eslintrc", ".babelrc", ".toml", ".config", ""
+    ];
+
+    if (!ALLOWED_EXTENSIONS.includes(extName)) {
+      return res.status(403).json({ error: "Forbidden: File extension is not allowed for modification." });
+    }
+
+    const fs = await import("fs/promises");
+    await fs.writeFile(absolutePath, content, "utf-8");
+    
+    console.log(`[Editor] Successfully saved file on disk: ${filePath}`);
+    return res.json({ status: "success", message: `Successfully saved file on disk at: ${filePath}` });
+  } catch (err: any) {
+    console.error("Save file operation failed:", err);
+    return res.status(500).json({ error: `Failed to save file on disk: ${err.message}` });
   }
 });
 
@@ -405,7 +584,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, () => {
+  httpServer.listen(PORT, () => {
     console.log(`CodeScope Server running on port ${PORT}`);
   });
 }

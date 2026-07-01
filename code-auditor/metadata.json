@@ -1,0 +1,6 @@
+{
+  "name": "Code Auditor",
+  "description": "Static Code Analyzer and Auditor for ZIP archives. Scans React, TypeScript, Go, and Rust code for security, quality, and refactoring opportunities with detailed unified patches.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

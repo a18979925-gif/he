@@ -11,16 +11,25 @@ import {
   detectDuplications,
   calculateCognitiveComplexity,
   sweepCompliance
-} from "./helperanalize.js";
+} from "./helperAnalyze.js";
 import { CodeScopeAnalysis } from "./src/types.js";
 
 /**
  * Resolves local import paths to guess actual dependencies in the project.
  */
 function resolveImport(currentFile: string, importPath: string, allFilePaths: string[]): string | null {
-  if (!importPath.startsWith(".")) return null;
-  const currentDir = path.dirname(currentFile);
-  const resolved = path.normalize(path.join(currentDir, importPath)).replace(/\\/g, "/");
+  let resolved: string;
+  if (importPath.startsWith(".")) {
+    const currentDir = path.dirname(currentFile);
+    resolved = path.normalize(path.join(currentDir, importPath)).replace(/\\/g, "/");
+  } else if (importPath.startsWith("@/") || importPath.startsWith("~/")) {
+    const subPath = importPath.substring(2);
+    const hasSrc = allFilePaths.some(p => p.startsWith("src/"));
+    const prefix = hasSrc ? "src/" : "";
+    resolved = path.normalize(prefix + subPath).replace(/\\/g, "/");
+  } else {
+    return null;
+  }
 
   const candidates = [
     resolved,
@@ -60,6 +69,9 @@ export function runCodebaseAnalysis(
   let isDDD = false;
   let isMVC = false;
   let isLayered = false;
+  let isNextJs = false;
+  let isServerless = false;
+  let isNestJs = false;
 
   files.forEach(f => {
     const p = f.name.toLowerCase();
@@ -67,6 +79,11 @@ export function runCodebaseAnalysis(
     else if (p.includes("boundedcontext") || p.includes("domain/models")) isDDD = true;
     else if (p.includes("controller") || p.includes("view") || p.includes("route")) isMVC = true;
     else if (p.includes("service") || p.includes("repository") || p.includes("persistence")) isLayered = true;
+
+    // Custom layouts
+    if (p.includes("pages/api/") || (p.includes("app/") && (p.includes("/page.tsx") || p.includes("/layout.tsx") || p.includes("/route.ts")))) isNextJs = true;
+    if (p.includes("functions/") || p.includes("lambdas/") || p.includes("serverless.yml") || p.includes("handler.js")) isServerless = true;
+    if (p.includes(".module.ts") && p.includes(".controller.ts") && p.includes(".service.ts")) isNestJs = true;
   });
 
   let style = "Modular Monolith";
@@ -81,6 +98,18 @@ export function runCodebaseAnalysis(
     style = "Domain-Driven Design (DDD)";
     confidence = 82;
     explanation = "Modules and directory groups are oriented around distinct bounded domain contexts and entities.";
+  } else if (isNextJs) {
+    style = "Next.js App/Pages Router Architecture";
+    confidence = 92;
+    explanation = "Modern page/app layout routing style utilizing static, server, and dynamic route rendering configurations.";
+  } else if (isNestJs) {
+    style = "NestJS Modular Architecture";
+    confidence = 94;
+    explanation = "Structured IoC container layout grouped by functional modules containing distinct controllers and providers.";
+  } else if (isServerless) {
+    style = "Serverless / Microservices Functions Layout";
+    confidence = 86;
+    explanation = "Decoupled serverless execution flow where routes are mapped directly to microservice lambda handlers.";
   } else if (isMVC) {
     style = "Model-View-Controller (MVC)";
     confidence = 90;

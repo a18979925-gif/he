@@ -1,0 +1,6 @@
+{
+  "name": "Enterprise Team Workspace",
+  "description": "An enterprise-grade team organization and workspace management platform featuring granular role-based permissions, project-level access controls, interactive dashboards, settings sections, and detailed audit logging.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -18,6 +18,38 @@ export interface SandboxProject {
   analysis?: CodeScopeAnalysis;
 }
 
+/**
+ * Splits a SQL expression string by commas, ignoring commas within quotes.
+ */
+function splitSqlValues(str: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let inBacktick = false;
+
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+    if (char === "'" && !inDoubleQuote && !inBacktick) {
+      inSingleQuote = !inSingleQuote;
+      current += char;
+    } else if (char === '"' && !inSingleQuote && !inBacktick) {
+      inDoubleQuote = !inDoubleQuote;
+      current += char;
+    } else if (char === '`' && !inSingleQuote && !inDoubleQuote) {
+      inBacktick = !inBacktick;
+      current += char;
+    } else if (char === "," && !inSingleQuote && !inDoubleQuote && !inBacktick) {
+      result.push(current.trim());
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  result.push(current.trim());
+  return result;
+}
+
 export const sandboxProjects = new Map<string, SandboxProject>();
 
 /**
@@ -27,14 +59,28 @@ function filterRows(rows: any[], whereClause: string, params: Record<string, any
   try {
     const cleanClause = whereClause.trim().replace(/\s+/g, " ");
     
-    // Check simple forms: "id = 1" or "id = $1" or "email = :email"
-    const match = cleanClause.match(/(\w+)\s*(=|!=|>|<|LIKE)\s*(.*)/i);
+    const match = cleanClause.match(/(\w+)\s*(=|!=|>|<|LIKE|IN)\s*(.*)/i);
     if (match) {
       const col = match[1].trim();
       const op = match[2].trim().toUpperCase();
-      let valRaw = match[3].trim().replace(/[,;()]/g, "");
+      let valRaw = match[3].trim();
 
-      let val: any = valRaw;
+      if (op === "IN") {
+        const inner = valRaw.replace(/^\(|\)$/g, "");
+        const parts = inner.split(",").map(p => {
+          let val = p.trim().replace(/^['"]|['"]$/g, "");
+          if (!isNaN(val as any) && val !== "") return Number(val);
+          return val;
+        });
+
+        return rows.filter(row => {
+          const cell = row[col];
+          if (cell === undefined) return false;
+          return parts.some(p => String(p) === String(cell));
+        });
+      }
+
+      let val: any = valRaw.replace(/[,;()]/g, "");
       if (val.startsWith("$")) {
         const paramIdx = parseInt(val.substring(1)) - 1;
         val = Object.values(params)[paramIdx];
@@ -87,7 +133,27 @@ export function executeSQL(
 
     // 1. SELECT Query
     if (query.toUpperCase().startsWith("SELECT")) {
-      const selectMatch = query.match(/SELECT\s+(.*?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(.*))?/i);
+      let workingQuery = query;
+      let limit: number | null = null;
+      let orderByCol: string | null = null;
+      let orderByDir: "ASC" | "DESC" = "ASC";
+
+      const limitMatch = workingQuery.match(/\s+LIMIT\s+(\d+)/i);
+      if (limitMatch) {
+        limit = parseInt(limitMatch[1]);
+        workingQuery = workingQuery.replace(/\s+LIMIT\s+(\d+)/i, "");
+      }
+
+      const orderMatch = workingQuery.match(/\s+ORDER\s+BY\s+(\w+)(?:\s+(ASC|DESC))?/i);
+      if (orderMatch) {
+        orderByCol = orderMatch[1];
+        if (orderMatch[2]) {
+          orderByDir = orderMatch[2].toUpperCase() === "DESC" ? "DESC" : "ASC";
+        }
+        workingQuery = workingQuery.replace(/\s+ORDER\s+BY\s+(\w+)(?:\s+(ASC|DESC))?/i, "");
+      }
+
+      const selectMatch = workingQuery.match(/SELECT\s+(.*?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(.*))?/i);
       if (selectMatch) {
         const fields = selectMatch[1].split(",").map(f => f.trim().replace(/['"`]/g, ""));
         const tableName = selectMatch[2];
@@ -98,6 +164,28 @@ export function executeSQL(
 
         if (whereClause) {
           rows = filterRows(rows, whereClause, params);
+        }
+
+        if (orderByCol) {
+          const col = orderByCol;
+          const dir = orderByDir;
+          rows.sort((a, b) => {
+            const valA = a[col];
+            const valB = b[col];
+            if (valA === undefined) return 1;
+            if (valB === undefined) return -1;
+            if (valA === valB) return 0;
+            if (typeof valA === "number" && typeof valB === "number") {
+              return dir === "ASC" ? valA - valB : valB - valA;
+            }
+            return dir === "ASC"
+              ? String(valA).localeCompare(String(valB))
+              : String(valB).localeCompare(String(valA));
+          });
+        }
+
+        if (limit !== null) {
+          rows = rows.slice(0, limit);
         }
 
         const projectedRows = rows.map(row => {
@@ -119,7 +207,7 @@ export function executeSQL(
       if (insertMatch) {
         const tableName = insertMatch[1];
         const cols = insertMatch[2].split(",").map(c => c.trim().replace(/['"`]/g, ""));
-        const valsRaw = insertMatch[3].split(",").map(v => v.trim());
+        const valsRaw = splitSqlValues(insertMatch[3]);
 
         const table = getTable(tableName);
         const newId = table.length > 0 ? Math.max(...table.map(r => typeof r.id === 'number' ? r.id : 0)) + 1 : 1;
@@ -162,13 +250,13 @@ export function executeSQL(
           rowsToUpdate = filterRows(table, whereClause, params);
         }
 
-        const sets = setsRaw.split(",").map(s => s.trim());
+        const sets = splitSqlValues(setsRaw);
         rowsToUpdate.forEach(row => {
           sets.forEach(setStr => {
-            const parts = setStr.split("=");
-            if (parts.length === 2) {
-              const col = parts[0].trim().replace(/['"`]/g, "");
-              let val: any = parts[1].trim();
+            const eqIdx = setStr.indexOf("=");
+            if (eqIdx !== -1) {
+              const col = setStr.substring(0, eqIdx).trim().replace(/['"`]/g, "");
+              let val: any = setStr.substring(eqIdx + 1).trim();
 
               if (val.startsWith("$")) {
                 const paramIdx = parseInt(val.substring(1)) - 1;
@@ -249,45 +337,81 @@ export function executeSQL(
 }
 
 /**
+ * Generates a realistic mock row based on column type and name
+ */
+function generateMockRow(columns: any[], idVal: number): Record<string, any> {
+  const row: Record<string, any> = {};
+  
+  columns.forEach((c: any) => {
+    const colName = c.name.toLowerCase();
+    const colType = c.type.toLowerCase();
+    
+    if (colName === "id") {
+      row[c.name] = idVal;
+      return;
+    }
+    
+    // Value based on name context
+    if (colName.includes("email")) {
+      row[c.name] = `test_user_${idVal}@example.com`;
+    } else if (colName.includes("username") || colName.includes("login")) {
+      row[c.name] = `mock_user_${idVal}`;
+    } else if (colName.includes("name") || colName.includes("title")) {
+      if (colName.includes("first")) {
+        row[c.name] = idVal === 1 ? "Alex" : "Jane";
+      } else if (colName.includes("last")) {
+        row[c.name] = idVal === 1 ? "Smith" : "Doe";
+      } else {
+        row[c.name] = `Mock Title / Name #${idVal}`;
+      }
+    } else if (colName.includes("password") || colName.includes("passwd")) {
+      row[c.name] = "$2b$10$32r473gq74tq34tgmockhashedpassword";
+    } else if (colName.includes("role")) {
+      row[c.name] = idVal === 1 ? "ADMIN" : "USER";
+    } else if (colName.includes("price") || colName.includes("amount") || colName.includes("total")) {
+      row[c.name] = idVal * 99.99;
+    } else if (colName.includes("stock") || colName.includes("quantity") || colName.includes("qty")) {
+      row[c.name] = idVal * 10 + 5;
+    } else if (colName.includes("status")) {
+      row[c.name] = idVal === 1 ? "ACTIVE" : "PENDING";
+    } else if (colName.includes("date") || colName.includes("time") || colName.includes("created_at") || colName.includes("updated_at")) {
+      row[c.name] = new Date(Date.now() - idVal * 3600 * 1000).toISOString();
+    } else if (colName.includes("description") || colName.includes("content") || colName.includes("text")) {
+      row[c.name] = `This is a dynamic mock content description for row #${idVal}.`;
+    } else if (colName.includes("phone")) {
+      row[c.name] = `+48 500 600 70${idVal}`;
+    } else {
+      // Fallback by type
+      if (colType.includes("int") || colType.includes("num") || colType.includes("double") || colType.includes("float") || colType.includes("decimal")) {
+        row[c.name] = idVal;
+      } else if (colType.includes("bool") || colType.includes("tinyint(1)")) {
+        row[c.name] = idVal % 2 === 1;
+      } else {
+        row[c.name] = `Value_${idVal}`;
+      }
+    }
+  });
+
+  // Force add ID column if not parsed but is standard
+  if (row["id"] === undefined && row["ID"] === undefined) {
+    row["id"] = idVal;
+  }
+
+  return row;
+}
+
+/**
  * Initializes realistic mock database rows for parsed schemas
  */
 export function initializeMockData(tables: any[]): Record<string, Array<Record<string, any>>> {
   const state: Record<string, Array<Record<string, any>>> = {};
 
   tables.forEach(table => {
-    const name = table.name.toLowerCase();
-    state[table.name] = [];
-
-    if (name.includes("user") || name.includes("customer")) {
-      state[table.name] = [
-        { id: 1, username: "alex_dev", email: "alex@example.com", role: "DEVELOPER", created_at: new Date().toISOString() },
-        { id: 2, username: "jane_mgr", email: "jane@example.com", role: "ADMIN", created_at: new Date().toISOString() }
-      ];
-    } else if (name.includes("product") || name.includes("item")) {
-      state[table.name] = [
-        { id: 1, name: "Premium Enterprise Subscription", price: 299.00, stock: 15, category: "SaaS" },
-        { id: 2, name: "Consulting Support Hour", price: 150.00, stock: 99, category: "Service" }
-      ];
-    } else if (name.includes("order") || name.includes("transaction")) {
-      state[table.name] = [
-        { id: 1, userId: 1, totalPrice: 299.00, status: "PAID", created_at: new Date().toISOString() },
-        { id: 2, userId: 2, totalPrice: 150.00, status: "PENDING", created_at: new Date().toISOString() }
-      ];
-    } else if (name.includes("post") || name.includes("article") || name.includes("blog")) {
-      state[table.name] = [
-        { id: 1, title: "Getting Started with Live CodeScope Runtimes", content: "A deep dive into real in-memory databases.", published: true },
-        { id: 2, title: "Why Static Analyzers Love TypeScript", content: "Exploring abstract syntax trees with AI-Oracle.", published: false }
-      ];
-    } else {
-      // Default fallback single row
-      const fallbackRow: Record<string, any> = { id: 1 };
-      table.columns.forEach((c: any) => {
-        if (c.name !== "id") {
-          fallbackRow[c.name] = c.type.toLowerCase().includes("int") || c.type.toLowerCase().includes("num") ? 0 : "Default Value";
-        }
-      });
-      state[table.name] = [fallbackRow];
-    }
+    const columns = table.columns || [];
+    state[table.name] = [
+      generateMockRow(columns, 1),
+      generateMockRow(columns, 2)
+    ];
   });
 
   return state;

@@ -115,7 +115,9 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   currentFileIssue,
   codeSearchQuery,
 }) => {
-  const diffItems = getDiffData(originalContent, securedContent, currentFileIssue);
+  const diffItems = React.useMemo(() => {
+    return getDiffData(originalContent, securedContent, currentFileIssue);
+  }, [originalContent, securedContent, currentFileIssue]);
 
   // Synchronized scrolling refs and handlers
   const leftScrollRef = useRef<HTMLDivElement>(null);
